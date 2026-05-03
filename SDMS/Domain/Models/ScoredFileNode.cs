@@ -1,4 +1,4 @@
-namespace SDMS.SDMS.Domain.Models;
+namespace SDMS.Domain.Models;
 
 public class ScoredFileNode
 {

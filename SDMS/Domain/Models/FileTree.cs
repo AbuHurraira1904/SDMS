@@ -1,13 +1,15 @@
-namespace SDMS.SDMS.Domain.Models;
+namespace SDMS.Domain.Models;
 
-public class FileTree
+public sealed record FileTree
 {
-    public FileNode Root { get; init; }
-    public DateTime ScannedAt { get; init; }
-    public string ScanRootPath { get; init; }
-    public int TotalFiles { get; init; }
-    public int TotalDirectories { get; init; }
-    public long TotalSizeBytes { get; init; }
-    public int TotalIgnoredFiles { get; init; }
-    public List<string> SkippedPaths { get; init; }  // Permission denied, etc.
+    public required FileNode Root { get; init; }
+    public required DateTime ScannedAt { get; init; }
+    public required string ScanRootPath { get; init; }
+    
+    public required int TotalFiles { get; init; }
+    public required int TotalDirectories { get; init; }
+    public required long TotalSizeBytes { get; init; }
+    public required int TotalIgnoredFiles { get; init; }
+    
+    public required List<string> SkippedPaths { get; init; }
 }

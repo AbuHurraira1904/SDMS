@@ -20,7 +20,7 @@ public enum ExecutionState
 public class OperationResult
 {
     public Guid OperationId { get; init; }
-    public OperationType OperationType { get; init; }
+    public OpType OperationType { get; init; }
     public bool Success { get; init; }
     public string? ErrorMessage { get; init; }
     public DateTime ExecutedAt { get; init; }
