@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace SDMS.SDMS.Domain.Models;
+namespace SDMS.Domain.Models;
 
 public class FileNode
 {

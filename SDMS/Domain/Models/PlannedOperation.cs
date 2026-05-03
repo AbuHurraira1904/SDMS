@@ -1,4 +1,4 @@
-namespace SDMS.SDMS.Domain.Models;
+namespace SDMS.Domain.Models;
 
 public enum OperationType { Move, Delete, CreateFolder, Rename, Merge }
 
