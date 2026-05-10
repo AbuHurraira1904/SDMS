@@ -55,16 +55,7 @@ public partial class App : System.Windows.Application
         Console.WriteLine();
 
         // ── Scan options ──────────────────────────────────────────────────────
-        var options = new ScanOptions
-        {
-            FollowSymlinks      = false,
-            IncludeHidden       = false,
-            IncludeSystemFiles  = false,
-            MaxDepth            = 5,
-            MaxFileSizeBytes    = null,
-            ExcludedDirectoryNames = ["node_modules", ".git", ".vs", "bin", "obj"],
-            ExcludedExtensions  = [],
-        };
+        var options = new ScanOptions();
 
         PrintOptions(options);
 
@@ -104,26 +95,80 @@ public partial class App : System.Windows.Application
         Console.WriteLine();
 
         // ── Summary ───────────────────────────────────────────────────────────
-        Pass("Scan completed successfully");
-        Console.WriteLine();
-        Console.WriteLine("  ┌─ Summary ───────────────────────────────────┐");
-        Console.WriteLine($"  │  Files          : {tree.TotalFiles,10:N0}               │");
-        Console.WriteLine($"  │  Directories    : {tree.TotalDirectories,10:N0}               │");
-        Console.WriteLine($"  │  Total size     : {FormatBytes(tree.TotalSizeBytes),10}               │");
-        Console.WriteLine($"  │  Ignored files  : {tree.TotalIgnoredFiles,10:N0}               │");
-        Console.WriteLine($"  │  Skipped paths  : {tree.SkippedPaths.Count,10:N0}               │");
-        Console.WriteLine($"  │  Elapsed        : {sw.Elapsed.TotalSeconds,9:F2}s               │");
-        Console.WriteLine("  └─────────────────────────────────────────────┘");
+        // ── Analysis ──────────────────────────────────────────────────────────
+        var a = tree.BasicInfo;  // shorthand
+
+        // Category breakdown
+        Console.WriteLine("  ┌─ Categories ─────────────────────────────────");
+        foreach (var kv in a.CategoryCounts.OrderByDescending(x => x.Value).Take(10))
+            Console.WriteLine($"  │  {kv.Key,-14} {kv.Value,6:N0} files   {FormatBytes(a.CategorySizes.GetValueOrDefault(kv.Key))}");
+        Console.WriteLine("  └─────────────────────────────────────────────");
         Console.WriteLine();
 
-        // ── Skipped paths ─────────────────────────────────────────────────────
-        if (tree.SkippedPaths.Count > 0)
+        // Top 10 extensions by count
+        Console.WriteLine("  ┌─ Top Extensions (by count) ──────────────────");
+        foreach (var kv in a.ExtensionCounts.OrderByDescending(x => x.Value).Take(10))
+            Console.WriteLine($"  │  .{kv.Key,-13} {kv.Value,6:N0} files   {FormatBytes(a.ExtensionSizes.GetValueOrDefault(kv.Key))}");
+        Console.WriteLine("  └─────────────────────────────────────────────");
+        Console.WriteLine();
+
+        // Timestamps
+        Console.WriteLine("  ┌─ File Age ───────────────────────────────────");
+        Console.WriteLine($"  │  Oldest file  : {(a.OldestFile == DateTime.MaxValue ? "n/a" : a.OldestFile.ToString("yyyy-MM-dd"))}");
+        Console.WriteLine($"  │  Newest file  : {(a.NewestFile == DateTime.MinValue ? "n/a" : a.NewestFile.ToString("yyyy-MM-dd"))}");
+        Console.WriteLine("  └─────────────────────────────────────────────");
+        Console.WriteLine();
+
+        // Immediate subdirs
+        Console.WriteLine("  ┌─ Immediate Subdirectories (by size) ─────────");
+        foreach (var d in a.ImmediateSubDirs.OrderByDescending(x => x.Size).Take(10))
+            Console.WriteLine($"  │  {FormatBytes(d.Size),10}   {d.Name}");
+        Console.WriteLine("  └─────────────────────────────────────────────");
+        Console.WriteLine();
+
+        // Flagged paths — hidden
+        if (a.HiddenPaths.Count > 0)
         {
-            Warn($"{tree.SkippedPaths.Count} path(s) skipped (permission / IO errors):");
-            foreach (var p in tree.SkippedPaths.Take(5))
+            Console.WriteLine($"  ┌─ Hidden files ({a.HiddenPaths.Count:N0} total) ─────────────────");
+            foreach (var p in a.HiddenPaths.Take(10))
+                Console.WriteLine($"  │  {p}");
+            if (a.HiddenPaths.Count > 10)
+                Console.WriteLine($"  │  … and {a.HiddenPaths.Count - 10} more");
+            Console.WriteLine("  └─────────────────────────────────────────────");
+            Console.WriteLine();
+        }
+
+        // Flagged paths — system
+        if (a.SystemPaths.Count > 0)
+        {
+            Console.WriteLine($"  ┌─ System files ({a.SystemPaths.Count:N0} total) ─────────────────");
+            foreach (var p in a.SystemPaths.Take(10))
+                Console.WriteLine($"  │  {p}");
+            if (a.SystemPaths.Count > 10)
+                Console.WriteLine($"  │  … and {a.SystemPaths.Count - 10} more");
+            Console.WriteLine("  └─────────────────────────────────────────────");
+            Console.WriteLine();
+        }
+
+        // Skipped paths — permission / IO errors
+        if (a.SkippedPaths.Count > 0)
+        {
+            Warn($"{a.SkippedPaths.Count} path(s) skipped (permission / IO errors):");
+            foreach (var p in a.SkippedPaths.Take(10))
                 Console.WriteLine($"    • {p}");
-            if (tree.SkippedPaths.Count > 5)
-                Console.WriteLine($"    … and {tree.SkippedPaths.Count - 5} more.");
+            if (a.SkippedPaths.Count > 10)
+                Console.WriteLine($"    … and {a.SkippedPaths.Count - 10} more");
+            Console.WriteLine();
+        }
+
+        // ── Skipped paths ─────────────────────────────────────────────────────
+        if (tree.BasicInfo.SkippedPaths.Count > 0)
+        {
+            Warn($"{tree.BasicInfo.SkippedPaths.Count} path(s) skipped (permission / IO errors):");
+            foreach (var p in tree.BasicInfo.SkippedPaths.Take(5))
+                Console.WriteLine($"    • {p}");
+            if (tree.BasicInfo.SkippedPaths.Count > 5)
+                Console.WriteLine($"    … and {tree.BasicInfo.SkippedPaths.Count - 5} more.");
             Console.WriteLine();
         }
 
@@ -184,10 +229,10 @@ public partial class App : System.Windows.Application
         try
         {
             var loaded = await new JSONTreeSerializer().DeserializeAsync(outputPath);
-            if (loaded.ScanRootPath == tree.ScanRootPath && loaded.TotalFiles == tree.TotalFiles)
+            if (loaded.ScanRootPath == tree.ScanRootPath && loaded.BasicInfo.TotalFiles == tree.BasicInfo.TotalFiles)
                 Pass("JSON round-trip OK — deserialized tree matches original.");
             else
-                Fail($"Round-trip mismatch: files expected={tree.TotalFiles} got={loaded.TotalFiles}");
+                Fail($"Round-trip mismatch: files expected={tree.BasicInfo.TotalFiles} got={loaded.BasicInfo.TotalFiles}");
         }
         catch (Exception ex) { Fail($"Deserialisation failed: {ex.Message}"); }
 

@@ -15,9 +15,9 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         {
             return entry switch
             {
-                FileInfo fi      => BuildFromFile(fi),
-                DirectoryInfo di => BuildFromDirectory(di),
-                _                => BuildGeneric(entry),
+                FileInfo fi      => ExtractedFileData(fi),
+                DirectoryInfo di => ExtractedDirData(di),
+                _                => ExtractedGenericData(entry),
             };
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
@@ -39,7 +39,7 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         catch { return null; } // Occurs with broken symlinks or locked reparse points
     }
     
-    private ExtractedMetaData BuildFromFile(FileInfo fi) => new()
+    private ExtractedMetaData ExtractedFileData(FileInfo fi) => new()
     {
         Name = fi.Name,
         FullPath = fi.FullName,
@@ -53,7 +53,7 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         PermissionError = false
     };
 
-    private ExtractedMetaData BuildFromDirectory(DirectoryInfo di) => new()
+    private ExtractedMetaData ExtractedDirData(DirectoryInfo di) => new()
     {
         Name = di.Name,
         FullPath = di.FullName,
@@ -67,7 +67,7 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         PermissionError = false
     };
 
-    private ExtractedMetaData BuildGeneric(FileSystemInfo entry) => new()
+    private ExtractedMetaData ExtractedGenericData(FileSystemInfo entry) => new()
     {
         Name = entry.Name,
         FullPath = entry.FullName,

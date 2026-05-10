@@ -9,11 +9,34 @@ public sealed record ScanOptions
     // Common noise directories excluded by default
     public List<string> ExcludedDirectoryNames { get; init; } =
     [
-        "node_modules", ".git", ".vs", ".idea", "bin", "obj", 
-        "$RECYCLE.BIN", "System Volume Information"
+        // Windows OS internals
+        "Windows",
+        "Program Files",
+        "Program Files (x86)",
+        "ProgramData",
+        "Recovery",
+        "System Volume Information",
+        "$RECYCLE.BIN",
+        "$WinREAgent",
+        "$Windows.~WS",
+        "$Windows.~BT",
+        "MSOCache",
+        "OneDriveTemp",
+     
+        // Dev noise — safe to exclude for all users
+        "node_modules",
+        ".git",
+        ".vs",
+        ".idea",
+        "bin",
+        "obj",
     ];
 
-    public List<string> ExcludedExtensions { get; init; } = [];
+    public List<string> ExcludedExtensions { get; init; } =     [
+        ".sys",   // kernel / driver files
+        ".etl",   // Windows event trace logs (can be gigabytes)
+        ".dmp",   // crash dump files
+    ];
 
     public int? MaxDepth { get; init; } = null;
     public long? MaxFileSizeBytes { get; init; } = null;

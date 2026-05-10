@@ -23,12 +23,6 @@ public interface ITreeWalk_Interface
         CancellationToken ct = default);
 
     // -- Statistics from the last completed scan --
+    FolderAnalysisMetrics Analysis { get; }
     
-    int TotalFiles { get; }
-    int TotalDirectories { get; }
-    long TotalSizeBytes { get; }
-    int TotalIgnoredFiles { get; }
-
-    /// <summary> Collection of paths that threw IO/Access exceptions during the walk. </summary>
-    IReadOnlyList<string> SkippedPaths { get; }
 }

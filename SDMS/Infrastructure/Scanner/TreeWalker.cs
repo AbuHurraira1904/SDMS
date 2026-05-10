@@ -25,14 +25,11 @@ public sealed class TreeWalker : ITreeWalk_Interface
 
     // Counters reset at the start of each WalkAsync call.
     private int  _files, _dirs, _ignored;
+    private FolderAnalysisMetrics? _metrics;
     private long _bytes;
     private readonly List<string> _skipped = [];
-
-    public int                  TotalFiles       => _files;
-    public int                  TotalDirectories => _dirs;
-    public long                 TotalSizeBytes   => _bytes;
-    public int                  TotalIgnoredFiles => _ignored;
-    public IReadOnlyList<string> SkippedPaths    => _skipped;
+    
+    public FolderAnalysisMetrics Analysis => _metrics;
 
     public TreeWalker(
         IMetaDataExtractor_Interface meta,
@@ -43,15 +40,41 @@ public sealed class TreeWalker : ITreeWalk_Interface
         _guard  = guard;
         _mounts = mounts;
     }
-
-    /// <inheritdoc/>
-    public async Task<FileNode> WalkAsync(
-        string                                              rootPath,
-        ScanOptions                                         options,
-        IProgress<(int FilesScanned, string CurrentPath)>? progress = null,
-        CancellationToken                                   ct       = default)
+    
+    // helper for updating Analysis Metrics
+    private void UpdateDashboardMetrics(ExtractedMetaData meta)
     {
-        // Reset counters for this scan run.
+        string ext = Path.GetExtension(meta.Name).ToLowerInvariant().TrimStart('.');
+        if (string.IsNullOrEmpty(ext)) ext = "no-extension";
+
+        // 1. Tally Extensions
+        _metrics.ExtensionCounts[ext] = _metrics.ExtensionCounts.GetValueOrDefault(ext) + 1;
+        _metrics.ExtensionSizes[ext] = _metrics.ExtensionSizes.GetValueOrDefault(ext) + meta.SizeBytes;
+
+        // 2. Tally Categories (using your MimeClassifier logic)
+        string category = MineClassifier.Classify(ext); // e.g., "Image", "Video"
+        _metrics.CategoryCounts[category] = _metrics.CategoryCounts.GetValueOrDefault(category) + 1;
+
+        // 3. Flagged Files
+        if ((meta.Attributes & FileAttributes.Hidden) != 0) _metrics.HiddenPaths.Add(meta.FullPath);
+        if ((meta.Attributes & FileAttributes.System) != 0) _metrics.SystemPaths.Add(meta.FullPath);
+
+        // 4. Timestamps
+        if (meta.ModifiedAt < _metrics.OldestFile && meta.ModifiedAt > DateTime.MinValue) 
+            _metrics.OldestFile = meta.ModifiedAt;
+    
+        if (meta.ModifiedAt > _metrics.NewestFile) 
+            _metrics.NewestFile = meta.ModifiedAt;
+    }
+    
+    
+    public async Task<FileNode> WalkAsync(
+        string rootPath,
+        ScanOptions options,
+        IProgress<(int FilesScanned, string CurrentPath)>? progress = null,
+        CancellationToken ct = default)
+    {
+        _metrics = new FolderAnalysisMetrics();
         _files = _dirs = _ignored = 0;
         _bytes = 0;
         _skipped.Clear();
@@ -59,68 +82,60 @@ public sealed class TreeWalker : ITreeWalk_Interface
         rootPath = Path.GetFullPath(rootPath);
         _guard.RegisterRoot(rootPath);
 
-        // Offload the CPU-bound walk to a thread-pool thread so the calling
-        // async context (e.g. a UI thread) is not blocked.
-        return await Task.Run(
-            () => WalkDirectory(new DirectoryInfo(rootPath), options, progress, ct, depth: 0),
-            ct);
+        var root = await Task.Run(
+            () => WalkDirectory(new DirectoryInfo(rootPath), options, progress, ct, depth: 0), ct);
+
+        // Sync counters into metrics after walk completes
+        _metrics.TotalFiles       = _files;
+        _metrics.TotalDirectories = _dirs;
+        _metrics.TotalSizeBytes   = _bytes;
+        _metrics.TotalIgnoredFiles = _ignored;
+        _metrics.SkippedPaths.AddRange(_skipped);
+
+        return root;
     }
 
     // ── Core recursion ────────────────────────────────────────────────────────
 
     private FileNode WalkDirectory(
-        DirectoryInfo                                       di,
-        ScanOptions                                         options,
+        DirectoryInfo di,
+        ScanOptions options,
         IProgress<(int FilesScanned, string CurrentPath)>? progress,
-        CancellationToken                                   ct,
-        int                                                 depth)
+        CancellationToken ct,
+        int depth)
     {
         ct.ThrowIfCancellationRequested();
 
         _dirs++;
         var meta = _meta.Extract(di);
+        
+        // We start this folder's "Raw Physical Size" at 0.
+        long folderPhysicalSize = 0;
 
-        var dirNode = new FileNode
-        {
-            Name        = meta.Name,
-            FullPath    = meta.FullPath,
-            IsDirectory = true,
-            SizeBytes   = 0,
-            CreatedAt   = meta.CreatedAt ?? DateTime.MinValue,
-            ModifiedAt  = meta.ModifiedAt,
-            AccessedAt  = meta.AccessedAt,
-            Attributes  = meta.Attributes,
-            SymlinkTarget = meta.SymlinkTarget,
-            MimeType    = "directory",
-            Children    = [],
-        };
-
-        // Stop recursing when depth limit is reached — return node without children.
+        var dirNode = BuildDir(meta);
+        
+        // depth check
         if (options.MaxDepth.HasValue && depth >= options.MaxDepth.Value)
+        {
+            dirNode.SizeBytes = GetQuickFolderSize(di); 
             return dirNode;
-
+        }
+        
         IEnumerable<FileSystemInfo> entries;
         try
         {
             entries = di.EnumerateFileSystemInfos("*", new EnumerationOptions
             {
-                IgnoreInaccessible    = true,
-                RecurseSubdirectories = false,
-                AttributesToSkip      = 0,
+                IgnoreInaccessible = true,
+                AttributesToSkip = 0,
             });
         }
-        catch (UnauthorizedAccessException)
-        {
-            _skipped.Add(di.FullName);
-            return dirNode;
-        }
-        catch (IOException)
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
             _skipped.Add(di.FullName);
             return dirNode;
         }
 
-        // Sort: directories first, then files, each group alphabetically.
         var sorted = entries
             .OrderBy(e => e is FileInfo ? 1 : 0)
             .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
@@ -129,82 +144,137 @@ public sealed class TreeWalker : ITreeWalk_Interface
         foreach (var entry in sorted)
         {
             ct.ThrowIfCancellationRequested();
-
             bool entryIsSymlink = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
 
             if (entry is DirectoryInfo subDir)
             {
-                // Apply exclusion rules.
-                if (options.ExcludedDirectoryNames.Contains(
-                        subDir.Name, StringComparer.OrdinalIgnoreCase))
-                    continue;
+                // CHECK EXCLUSION FIRST — skip the whole subtree if excluded by name/hidden/system
+                // BUT still recurse for size accuracy if you want Windows-accurate folder sizes
+                bool excluded = IsDirectoryExcluded(subDir, options, entryIsSymlink);
 
-                if (!options.IncludeHidden &&
-                    (subDir.Attributes & FileAttributes.Hidden) != 0)
-                    continue;
+                if (!excluded)
+                {
+                    var childDirNode = WalkDirectory(subDir, options, progress, ct, depth + 1);
+                    folderPhysicalSize += childDirNode.SizeBytes;
 
-                if (!options.IncludeSystemFiles &&
-                    (subDir.Attributes & FileAttributes.System) != 0)
-                    continue;
+                    if (depth == 0)
+                        _metrics!.ImmediateSubDirs.Add(
+                            new SubDirSummary(subDir.Name, subDir.FullName, childDirNode.SizeBytes));
 
-                // Symlink guard — prevents infinite loops.
-                if (!_guard.ShouldFollow(subDir.FullName, options.FollowSymlinks, entryIsSymlink))
-                    continue;
-
-                var child = WalkDirectory(subDir, options, progress, ct, depth + 1);
-                dirNode.Children.Add(child);
+                    dirNode.Children.Add(childDirNode);
+                }
+                else
+                {
+                    // Still count size even for excluded dirs so parent sizes stay accurate
+                    // This matches what Windows Explorer shows
+                    folderPhysicalSize += GetQuickFolderSize(subDir);
+                }
             }
             else if (entry is FileInfo fi)
             {
-                // Apply per-file exclusion rules.
+                // Always accumulate size — excluded or not — for Windows-accurate totals
+                folderPhysicalSize += fi.Length;
+
                 var fileMeta = _meta.Extract(fi);
 
-                if (!options.IncludeHidden &&
-                    (fileMeta.Attributes & FileAttributes.Hidden) != 0)
-                { _ignored++; continue; }
+                // Metrics for ALL files (hidden, system included) — gives you the real picture
+                // If you only want metrics for visible files, move this inside the if below
+                UpdateDashboardMetrics(fileMeta);
 
-                if (!options.IncludeSystemFiles &&
-                    (fileMeta.Attributes & FileAttributes.System) != 0)
-                { _ignored++; continue; }
-
-                string ext = Path.GetExtension(fi.Name).ToLowerInvariant();
-                
-                if (options.ExcludedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
-                { _ignored++; continue; }
-
-                if (options.MaxFileSizeBytes.HasValue &&
-                    fileMeta.SizeBytes > options.MaxFileSizeBytes.Value)
-                { _ignored++; continue; }
-
-                if (fileMeta.PermissionError)
-                { _skipped.Add(fi.FullName); continue; }
-
-                string mimeType = MineClassifier.Classify(
-                    Path.GetExtension(fi.Name).TrimStart('.').ToLowerInvariant());
-
-                var fileNode = new FileNode
+                if (!IsFileIncluded(fi, options, fileMeta))
                 {
-                    Name          = fileMeta.Name,
-                    FullPath      = fileMeta.FullPath,
-                    IsDirectory   = false,
-                    SizeBytes     = fileMeta.SizeBytes,
-                    CreatedAt     = fileMeta.CreatedAt ?? DateTime.MinValue,
-                    ModifiedAt    = fileMeta.ModifiedAt,
-                    AccessedAt    = fileMeta.AccessedAt,
-                    Attributes    = fileMeta.Attributes,
-                    SymlinkTarget = fileMeta.SymlinkTarget,
-                    MimeType      = mimeType,
-                };
+                    _ignored++;
+                    continue;
+                }
 
+                var fileNode = BuildFile(fileMeta);
                 dirNode.Children.Add(fileNode);
                 _files++;
                 _bytes += fileNode.SizeBytes;
-
-                // Report progress after every file.
                 progress?.Report((_files, fi.FullName));
             }
         }
 
+        // adjusting the size of folder
+        dirNode.SizeBytes = folderPhysicalSize;
+        
         return dirNode;
+    }
+    
+    
+    // Helper
+
+    private static long GetQuickFolderSize(DirectoryInfo di)
+    {
+        try
+        {
+            // EnumerateFiles with SearchOption.AllDirectories is the closest 
+            // standard .NET way to simulate the "Properties" dialog sum.
+            return di.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+        }
+        catch
+        {
+            // If we can't even get a quick sum (Permission denied), we report 0
+            return 0;
+        }
+    }
+    
+    private FileNode BuildDir(ExtractedMetaData meta)
+    {
+        return new FileNode
+        {
+            Name = meta.Name,
+            FullPath = meta.FullPath,
+            IsDirectory = true,
+            SizeBytes = 0,
+            CreatedAt = meta.CreatedAt ?? DateTime.MinValue,
+            ModifiedAt = meta.ModifiedAt,
+            AccessedAt = meta.AccessedAt,
+            Attributes = meta.Attributes,
+            SymlinkTarget = meta.SymlinkTarget,
+            MimeType = "directory",
+            Children = [],
+        };
+    }
+
+    private FileNode BuildFile(ExtractedMetaData fileMeta)
+    {
+        string mimeType = MineClassifier.Classify(
+            Path.GetExtension(fileMeta.Name).TrimStart('.').ToLowerInvariant());
+        
+        return new FileNode
+        {
+            Name          = fileMeta.Name,
+            FullPath      = fileMeta.FullPath,
+            IsDirectory   = false,
+            SizeBytes     = fileMeta.SizeBytes,
+            CreatedAt     = fileMeta.CreatedAt ?? DateTime.MinValue,
+            ModifiedAt    = fileMeta.ModifiedAt,
+            AccessedAt    = fileMeta.AccessedAt,
+            Attributes    = fileMeta.Attributes,
+            SymlinkTarget = fileMeta.SymlinkTarget,
+            MimeType      = mimeType,
+        };
+    }
+    
+    
+    private bool IsDirectoryExcluded(DirectoryInfo di, ScanOptions opt, bool isSymlink)
+    {
+        if (opt.ExcludedDirectoryNames.Contains(di.Name, StringComparer.OrdinalIgnoreCase)) return true;
+        if (!opt.IncludeHidden && (di.Attributes & FileAttributes.Hidden) != 0) return true;
+        if (!opt.IncludeSystemFiles && (di.Attributes & FileAttributes.System) != 0) return true;
+        return !_guard.ShouldFollow(di.FullName, opt.FollowSymlinks, isSymlink);
+    }
+
+    private bool IsFileIncluded(FileInfo fi, ScanOptions opt, ExtractedMetaData meta)
+    {
+        if (meta.PermissionError) return false;
+        if (!opt.IncludeHidden && (meta.Attributes & FileAttributes.Hidden) != 0) return false;
+        if (!opt.IncludeSystemFiles && (meta.Attributes & FileAttributes.System) != 0) return false;
+    
+        string ext = Path.GetExtension(fi.Name).ToLowerInvariant();
+        if (opt.ExcludedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase)) return false;
+    
+        return true;
     }
 }

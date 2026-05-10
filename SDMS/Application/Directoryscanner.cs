@@ -56,17 +56,15 @@ public sealed class Directoryscanner : IDirectoryScanner
 
         // Delegate all traversal to the injected walker.
         var root = await _walker.WalkAsync(rootPath, options, progress, ct);
+        
+        var metrics = (_walker as TreeWalker)?.Analysis ?? new FolderAnalysisMetrics();
 
         return new FileTree
         {
             Root             = root,
             ScannedAt        = startedAt,
             ScanRootPath     = Path.GetFullPath(rootPath),
-            TotalFiles       = _walker.TotalFiles,
-            TotalDirectories = _walker.TotalDirectories,
-            TotalSizeBytes   = _walker.TotalSizeBytes,
-            TotalIgnoredFiles = _walker.TotalIgnoredFiles,
-            SkippedPaths     = [.. _walker.SkippedPaths],
+            BasicInfo        = metrics.DeepCopy()
         };
     }
 

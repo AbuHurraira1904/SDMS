@@ -112,19 +112,85 @@ Console.WriteLine();
 
 var elapsed = DateTime.UtcNow - tree.ScannedAt;
 Console.WriteLine(
-    $"[scanner] Done — {tree.TotalFiles:N0} files, " +
-    $"{tree.TotalDirectories:N0} dirs, " +
-    $"{tree.TotalSizeBytes:N0} bytes, " +
-    $"{tree.TotalIgnoredFiles:N0} ignored " +
+    $"[scanner] Done — {tree.BasicInfo.TotalFiles:N0} files, " +
+    $"{tree.BasicInfo.TotalDirectories:N0} dirs, " +
+    $"{tree.BasicInfo.TotalSizeBytes:N0} bytes, " +
+    $"{tree.BasicInfo.TotalIgnoredFiles:N0} ignored " +
     $"in {elapsed.TotalSeconds:F2}s");
 
-if (tree.SkippedPaths.Count > 0)
+// ── Analysis ──────────────────────────────────────────────────────────
+var a = tree.BasicInfo;  // shorthand
+
+// Category breakdown
+Console.WriteLine("  ┌─ Categories ─────────────────────────────────");
+foreach (var kv in a.CategoryCounts.OrderByDescending(x => x.Value).Take(10))
+    Console.WriteLine($"  │  {kv.Key,-14} {kv.Value,6:N0} files   {FormatBytes(a.CategorySizes.GetValueOrDefault(kv.Key))}");
+Console.WriteLine("  └─────────────────────────────────────────────");
+Console.WriteLine();
+
+// Top 10 extensions by count
+Console.WriteLine("  ┌─ Top Extensions (by count) ──────────────────");
+foreach (var kv in a.ExtensionCounts.OrderByDescending(x => x.Value).Take(10))
+    Console.WriteLine($"  │  .{kv.Key,-13} {kv.Value,6:N0} files   {FormatBytes(a.ExtensionSizes.GetValueOrDefault(kv.Key))}");
+Console.WriteLine("  └─────────────────────────────────────────────");
+Console.WriteLine();
+
+// Timestamps
+Console.WriteLine("  ┌─ File Age ───────────────────────────────────");
+Console.WriteLine($"  │  Oldest file  : {(a.OldestFile == DateTime.MaxValue ? "n/a" : a.OldestFile.ToString("yyyy-MM-dd"))}");
+Console.WriteLine($"  │  Newest file  : {(a.NewestFile == DateTime.MinValue ? "n/a" : a.NewestFile.ToString("yyyy-MM-dd"))}");
+Console.WriteLine("  └─────────────────────────────────────────────");
+Console.WriteLine();
+
+// Immediate subdirs
+Console.WriteLine("  ┌─ Immediate Subdirectories (by size) ─────────");
+foreach (var d in a.ImmediateSubDirs.OrderByDescending(x => x.Size).Take(10))
+    Console.WriteLine($"  │  {FormatBytes(d.Size),10}   {d.Name}");
+Console.WriteLine("  └─────────────────────────────────────────────");
+Console.WriteLine();
+
+// Flagged paths — hidden
+if (a.HiddenPaths.Count > 0)
 {
-    Console.WriteLine($"[scanner] {tree.SkippedPaths.Count} path(s) skipped (permission/IO errors):");
-    foreach (var p in tree.SkippedPaths.Take(10))
+    Console.WriteLine($"  ┌─ Hidden files ({a.HiddenPaths.Count:N0} total) ─────────────────");
+    foreach (var p in a.HiddenPaths.Take(10))
+        Console.WriteLine($"  │  {p}");
+    if (a.HiddenPaths.Count > 10)
+        Console.WriteLine($"  │  … and {a.HiddenPaths.Count - 10} more");
+    Console.WriteLine("  └─────────────────────────────────────────────");
+    Console.WriteLine();
+}
+
+// Flagged paths — system
+if (a.SystemPaths.Count > 0)
+{
+    Console.WriteLine($"  ┌─ System files ({a.SystemPaths.Count:N0} total) ─────────────────");
+    foreach (var p in a.SystemPaths.Take(10))
+        Console.WriteLine($"  │  {p}");
+    if (a.SystemPaths.Count > 10)
+        Console.WriteLine($"  │  … and {a.SystemPaths.Count - 10} more");
+    Console.WriteLine("  └─────────────────────────────────────────────");
+    Console.WriteLine();
+}
+
+// Skipped paths — permission / IO errors
+if (a.SkippedPaths.Count > 0)
+{
+    Warn($"{a.SkippedPaths.Count} path(s) skipped (permission / IO errors):");
+    foreach (var p in a.SkippedPaths.Take(10))
+        Console.WriteLine($"    • {p}");
+    if (a.SkippedPaths.Count > 10)
+        Console.WriteLine($"    … and {a.SkippedPaths.Count - 10} more");
+    Console.WriteLine();
+}
+
+if (tree.BasicInfo.SkippedPaths.Count > 0)
+{
+    Console.WriteLine($"[scanner] {tree.BasicInfo.SkippedPaths.Count} path(s) skipped (permission/IO errors):");
+    foreach (var p in tree.BasicInfo.SkippedPaths.Take(10))
         Console.WriteLine($"  • {p}");
-    if (tree.SkippedPaths.Count > 10)
-        Console.WriteLine($"  … and {tree.SkippedPaths.Count - 10} more.");
+    if (tree.BasicInfo.SkippedPaths.Count > 10)
+        Console.WriteLine($"  … and {tree.BasicInfo.SkippedPaths.Count - 10} more.");
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
@@ -166,3 +232,19 @@ static void PrintHelp() => Console.WriteLine("""
       scanner C:\Users   --format msgpack --output tree.msgpack
       scanner /srv/data  --maxsize 104857600   # skip files > 100 MB
     """);
+
+string FormatBytes(long bytes) => bytes switch
+{
+    < 1_024               => $"{bytes} B",
+    < 1_048_576           => $"{bytes / 1024.0:F1} KB",
+    < 1_073_741_824       => $"{bytes / 1_048_576.0:F1} MB",
+    _                     => $"{bytes / 1_073_741_824.0:F2} GB",
+};
+void Warn(string msg) => WriteColored("  [WARN] ", ConsoleColor.Yellow, msg);
+void WriteColored(string prefix, ConsoleColor color, string msg)
+{
+    Console.ForegroundColor = color;
+    Console.Write(prefix);
+    Console.ResetColor();
+    Console.WriteLine(msg);
+}
