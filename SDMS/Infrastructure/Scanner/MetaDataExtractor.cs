@@ -38,7 +38,7 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         }
         catch { return null; } // Occurs with broken symlinks or locked reparse points
     }
-
+    
     private ExtractedMetaData BuildFromFile(FileInfo fi) => new()
     {
         Name = fi.Name,
@@ -58,7 +58,7 @@ public sealed class MetaDataExtractor : IMetaDataExtractor_Interface
         Name = di.Name,
         FullPath = di.FullName,
         IsDirectory = true,
-        SizeBytes = 0,
+        SizeBytes = di.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length),
         CreatedAt = SanitiseDate(di.CreationTimeUtc),
         ModifiedAt = di.LastWriteTimeUtc,
         AccessedAt = di.LastAccessTimeUtc,

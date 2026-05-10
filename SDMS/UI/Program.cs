@@ -7,7 +7,7 @@
 // ============================================================
 
 using System.IO;
-using SDMS.Application.Scanner;
+using SDMS.Application;
 using SDMS.Domain.Scanner;
 using SDMS.Infrastructure.Scanner;
 using SDMS.Infrastructure.Serialization;

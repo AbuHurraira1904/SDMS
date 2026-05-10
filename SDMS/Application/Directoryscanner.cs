@@ -6,13 +6,12 @@
 // ============================================================
 
 using System.IO;
-using System.Runtime.InteropServices;
+using SDMS.Domain.Models;
 using SDMS.Domain.Scanner;
 using SDMS.Infrastructure.Scanner;
 using SDMS.Infrastructure.Serialization;
-using SDMS.Domain.Models;
 
-namespace SDMS.Application.Scanner;
+namespace SDMS.Application;
 
 /// <summary>
 /// Application-layer facade implementing <see cref="IDirectoryScanner"/>.

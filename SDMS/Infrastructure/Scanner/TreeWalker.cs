@@ -168,6 +168,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
                 { _ignored++; continue; }
 
                 string ext = Path.GetExtension(fi.Name).ToLowerInvariant();
+                
                 if (options.ExcludedExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
                 { _ignored++; continue; }
 
