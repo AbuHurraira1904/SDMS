@@ -12,6 +12,8 @@ using SDMS.Domain.Scanner;
 using SDMS.Infrastructure.Scanner;
 using SDMS.Infrastructure.Serialization;
 using SDMS.Domain.Models;
+using SDMS.Infrastructure.Execution;
+using SDMS.Domain.Execution;
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -199,6 +201,70 @@ if (scanner is Directoryscanner ds)
 {
     var saved = await ds.SaveAsync(tree, output);
     Console.WriteLine($"[scanner] FileTree written → {saved}");
+}
+
+// --- Mocking a FinalizedPlan for testing ---
+var plan = new FinalizedPlan
+{
+    Id = Guid.NewGuid(),
+    SourcePlanId = Guid.NewGuid(),
+    FinalizedAt = DateTime.UtcNow,
+    Operations = new List<PlannedOperation>
+    {
+        // --- Images ---
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\1.png", DestinationPath = @"H:\SDMSTest\Images\1.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\2.png", DestinationPath = @"H:\SDMSTest\Images\2.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\3.png", DestinationPath = @"H:\SDMSTest\Images\3.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\4.png", DestinationPath = @"H:\SDMSTest\Images\4.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\5.png", DestinationPath = @"H:\SDMSTest\Images\5.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\6.png", DestinationPath = @"H:\SDMSTest\Images\6.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\7.png", DestinationPath = @"H:\SDMSTest\Images\7.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Screenshot 2026-04-27 220440.png", DestinationPath = @"H:\SDMSTest\Images\Screenshot 2026-04-27 220440.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+
+        // --- Documents (Project Specific) ---
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.docx", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.pdf", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.docx", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.pdf", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+
+        // --- Documents (General) ---
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\L23-0662_SE_Activity.docx", DestinationPath = @"H:\SDMSTest\Documents\L23-0662_SE_Activity.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Personal Commitments.txt", DestinationPath = @"H:\SDMSTest\Documents\Personal Commitments.txt", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\SE Project Proposal - Copy.docx", DestinationPath = @"H:\SDMSTest\Documents\SE Project Proposal - Copy.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
+
+        // --- Databases, HTML, Sheets ---
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\AnimeReleaseDB.accdb", DestinationPath = @"H:\SDMSTest\Database\AnimeReleaseDB.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Database1.accdb", DestinationPath = @"H:\SDMSTest\Database\Database1.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\calisthenics.html", DestinationPath = @"H:\SDMSTest\HTMLs\calisthenics.html", Status = OpStatus.Confirmed, Reason = "Web Sorting" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\VocalRange.xlsx", DestinationPath = @"H:\SDMSTest\Sheets\VocalRange.xlsx", Status = OpStatus.Confirmed, Reason = "Spreadsheet Sorting" },
+
+        // --- Deletions ---
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\Default.rdp", Status = OpStatus.Confirmed, Reason = "Cleanup" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\github-recovery-codes.txt", Status = OpStatus.Confirmed, Reason = "Security Cleanup" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\My Cheat TablesExceptionAutoSave_noname.ct", Status = OpStatus.Confirmed, Reason = "Temp File Cleanup" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\teest.srt", Status = OpStatus.Confirmed, Reason = "Junk Cleanup" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\what.CEA", Status = OpStatus.Confirmed, Reason = "Cleanup" }
+    }
+};
+
+// 1. Initialize the Engine
+IExecutionEngine executionEngine = new ExecutionEngine();
+
+// 2. Run Preflight before committing
+var validation = await executionEngine.PreflightAsync(plan);
+
+if (validation.IsValid)
+{
+    // 3. Execute with your specific options
+    var exoptions = new ExecutionOptions 
+    { 
+        UseStagingForDeletes = true,
+        DryRun = false 
+    };
+    
+    var log = await executionEngine.ExecuteAsync(plan, exoptions);
+    
+    Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
 }
 
 return 0;
