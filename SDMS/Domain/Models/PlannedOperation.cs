@@ -31,6 +31,13 @@ public class PlannedOperation
     public double Confidence { get; init; }        // 0.0–1.0
     public int Importance { get; init; }           // For UI sorting
     public bool IsUserAdded { get; init; }         // Manual vs Brain-generated
+    public bool IsDirectoryOp => Type switch
+    {
+        OpType.NewFolder or OpType.DeleteFolder or 
+            OpType.RenameFolder or OpType.MoveFolder or 
+            OpType.MergeFolder => true,
+        _ => false // Move and Delete are handled by runtime check
+    };
     public OpStatus Status { get; set; }
     
     public PlannedOperation Clone() => new PlannedOperation

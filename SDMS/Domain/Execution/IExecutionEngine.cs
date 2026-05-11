@@ -35,10 +35,10 @@ public class OperationResult
 public class ExecutionLog
 {
     public Guid PlanId { get; init; }
-    public ExecutionState FinalState { get; init; }
+    public ExecutionState FinalState { get; set; }
     public List<OperationResult> Results { get; init; } = new();
     public DateTime StartedAt { get; init; }
-    public DateTime EndedAt { get; init; }
+    public DateTime EndedAt { get; set; }
 
     public int SuccessCount => Results.Count(r => r.Success);
     public int FailureCount => Results.Count(r => !r.Success);
