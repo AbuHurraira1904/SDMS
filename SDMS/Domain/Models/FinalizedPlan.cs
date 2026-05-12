@@ -10,3 +10,6 @@ public class FinalizedPlan
     public int OperationCount => Operations.Count;
     // public List<Guid> LowConfidenceConfirmed { get; set; } = new();
 }
+
+
+

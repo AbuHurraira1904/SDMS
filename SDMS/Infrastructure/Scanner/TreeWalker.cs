@@ -28,6 +28,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
     private FolderAnalysisMetrics? _metrics;
     private long _bytes;
     private readonly List<string> _skipped = [];
+    private string RootPath;
     
     public FolderAnalysisMetrics Analysis => _metrics;
 
@@ -80,6 +81,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
         _skipped.Clear();
 
         rootPath = Path.GetFullPath(rootPath);
+        RootPath = rootPath;
         _guard.RegisterRoot(rootPath);
 
         var root = await Task.Run(
@@ -97,8 +99,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
 
     // ── Core recursion ────────────────────────────────────────────────────────
 
-    private FileNode WalkDirectory(
-        DirectoryInfo di,
+    private FileNode WalkDirectory(DirectoryInfo di,
         ScanOptions options,
         IProgress<(int FilesScanned, string CurrentPath)>? progress,
         CancellationToken ct,
@@ -107,12 +108,15 @@ public sealed class TreeWalker : ITreeWalk_Interface
         ct.ThrowIfCancellationRequested();
 
         _dirs++;
+        int childDirs = 0;
+        int childFiles = 0;
+        
         var meta = _meta.Extract(di);
         
         // We start this folder's "Raw Physical Size" at 0.
         long folderPhysicalSize = 0;
 
-        var dirNode = BuildDir(meta);
+        var dirNode = BuildDir(meta, depth);
         
         // depth check
         if (options.MaxDepth.HasValue && depth >= options.MaxDepth.Value)
@@ -148,6 +152,11 @@ public sealed class TreeWalker : ITreeWalk_Interface
 
             if (entry is DirectoryInfo subDir)
             {
+                // updating children data
+                    // ie the files and folders directly in it
+                childDirs++;
+                
+                
                 // CHECK EXCLUSION FIRST — skip the whole subtree if excluded by name/hidden/system
                 // BUT still recurse for size accuracy if you want Windows-accurate folder sizes
                 bool excluded = IsDirectoryExcluded(subDir, options, entryIsSymlink);
@@ -174,7 +183,9 @@ public sealed class TreeWalker : ITreeWalk_Interface
             {
                 // Always accumulate size — excluded or not — for Windows-accurate totals
                 folderPhysicalSize += fi.Length;
-
+                childFiles++;
+                
+                
                 var fileMeta = _meta.Extract(fi);
 
                 // Metrics for ALL files (hidden, system included) — gives you the real picture
@@ -188,6 +199,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
                 }
 
                 var fileNode = BuildFile(fileMeta);
+                fileNode.Depth = depth;
                 dirNode.Children.Add(fileNode);
                 _files++;
                 _bytes += fileNode.SizeBytes;
@@ -197,6 +209,15 @@ public sealed class TreeWalker : ITreeWalk_Interface
 
         // adjusting the size of folder
         dirNode.SizeBytes = folderPhysicalSize;
+        dirNode.numChildDirs = childDirs;
+        dirNode.numChildFiles = childFiles;
+        
+        foreach (FileNode child in dirNode.Children)
+        {
+            child.NumSiblings = dirNode.numChildFiles;
+        }
+        
+        
         
         return dirNode;
     }
@@ -219,14 +240,22 @@ public sealed class TreeWalker : ITreeWalk_Interface
         }
     }
     
-    private FileNode BuildDir(ExtractedMetaData meta)
+    private FileNode BuildDir(ExtractedMetaData meta, int d)
     {
+        string relPath = Path.GetRelativePath(RootPath, meta.FullPath);
+        string[] parents = relPath.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+
         return new FileNode
         {
             Name = meta.Name,
             FullPath = meta.FullPath,
+            RelativePath =  relPath,
+            ParentChain = parents[0..^1],
+            Depth = d,
             IsDirectory = true,
             SizeBytes = 0,
+            numChildDirs = 0,
+            numChildFiles = 0,
             CreatedAt = meta.CreatedAt ?? DateTime.MinValue,
             ModifiedAt = meta.ModifiedAt,
             AccessedAt = meta.AccessedAt,
@@ -242,18 +271,24 @@ public sealed class TreeWalker : ITreeWalk_Interface
         string mimeType = MineClassifier.Classify(
             Path.GetExtension(fileMeta.Name).TrimStart('.').ToLowerInvariant());
         
+        string relPath = Path.GetRelativePath(RootPath, fileMeta.FullPath);
+        string[] parents = relPath.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        
         return new FileNode
         {
-            Name          = fileMeta.Name,
-            FullPath      = fileMeta.FullPath,
-            IsDirectory   = false,
-            SizeBytes     = fileMeta.SizeBytes,
-            CreatedAt     = fileMeta.CreatedAt ?? DateTime.MinValue,
-            ModifiedAt    = fileMeta.ModifiedAt,
-            AccessedAt    = fileMeta.AccessedAt,
-            Attributes    = fileMeta.Attributes,
+            Name = fileMeta.Name,
+            FullPath = fileMeta.FullPath,
+            IsDirectory = false,
+            SizeBytes = fileMeta.SizeBytes,
+            CreatedAt = fileMeta.CreatedAt ?? DateTime.MinValue,
+            ModifiedAt = fileMeta.ModifiedAt,
+            AccessedAt = fileMeta.AccessedAt,
+            Attributes = fileMeta.Attributes,
             SymlinkTarget = fileMeta.SymlinkTarget,
-            MimeType      = mimeType,
+            MimeType = mimeType,
+            RelativePath =  relPath,
+            ParentChain = parents[0..^1],
+            Depth = 0,
         };
     }
     
