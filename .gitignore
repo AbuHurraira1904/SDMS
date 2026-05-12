@@ -3,3 +3,16 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+
+# JetBrains IDEs (Rider + PyCharm)
+.idea/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
