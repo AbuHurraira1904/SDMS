@@ -9,7 +9,9 @@
 using System.IO;
 using SDMS.Application;
 using SDMS.Domain.Scanner;
+using SDMS.Domain.Analysis;
 using SDMS.Infrastructure.Scanner;
+using SDMS.Infrastructure.Analysis;
 using SDMS.Infrastructure.Serialization;
 using SDMS.Domain.Models;
 using SDMS.Infrastructure.Execution;
@@ -114,11 +116,31 @@ Console.WriteLine();
 
 var elapsed = DateTime.UtcNow - tree.ScannedAt;
 Console.WriteLine(
-    $"[scanner] Done — {tree.BasicInfo.TotalFiles:N0} files, " +
+    $"[scanner] Done — " +
+    $"in {elapsed.TotalSeconds:F2}s");
+
+// 2. Analysis Engine (Compute Bound)
+IAnalysisEngine analysisEngine = new AnalysisEngine();
+AnalysisReport report;
+try
+{
+    report = await analysisEngine.AnalyzeAsync(tree);
+}
+catch (OperationCanceledException)
+{
+    Console.Error.WriteLine("\n[analysis] Analysis cancelled.");
+    return 3;
+}
+
+// 3. Result Review
+Console.WriteLine(
+    $"[analysis] Done — for {report.SourceTree.ScanRootPath} " + 
+    $"{report.FileTypeDistribution.Values.Sum()} files, " +
     $"{tree.BasicInfo.TotalDirectories:N0} dirs, " +
     $"{tree.BasicInfo.TotalSizeBytes:N0} bytes, " +
-    $"{tree.BasicInfo.TotalIgnoredFiles:N0} ignored " +
-    $"in {elapsed.TotalSeconds:F2}s");
+    $"{tree.BasicInfo.TotalIgnoredFiles:N0} ignored ");
+
+Console.WriteLine($"Required Labels: {string.Join(", ", report.RequiredLabels)}");
 
 // ── Analysis ──────────────────────────────────────────────────────────
 var a = tree.BasicInfo;  // shorthand
@@ -267,6 +289,8 @@ if (validation.IsValid)
     Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
 }
 
+
+
 return 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -313,4 +337,33 @@ void WriteColored(string prefix, ConsoleColor color, string msg)
     Console.Write(prefix);
     Console.ResetColor();
     Console.WriteLine(msg);
+}
+
+void PrintDistributions(AnalysisReport report)
+{
+    Console.WriteLine("\n==================================================");
+    Console.WriteLine($"{"EXTENSION",-15} | {"COUNT",-8} | {"TOTAL SIZE",-15}");
+    Console.WriteLine("--------------------------------------------------");
+
+    // Sort by count descending to see the most frequent types first
+    var sortedExts = report.FileTypeDistribution
+        .OrderByDescending(x => x.Value)
+        .ToList();
+
+    foreach (var entry in sortedExts)
+    {
+        string ext = string.IsNullOrEmpty(entry.Key) ? "(no ext)" : entry.Key;
+        int count = entry.Value;
+        long sizeInBytes = report.FileTypeSizeMap.GetValueOrDefault(entry.Key, 0L);
+            
+        // Format size for readability (e.g., 1.2 MB)
+        string readableSize = FormatBytes(sizeInBytes);
+
+        Console.WriteLine($"{ext,-15} | {count,-8} | {readableSize,-15}");
+    }
+
+    Console.WriteLine("==================================================");
+    Console.WriteLine($"Total Size: {FormatBytes(report.SourceTree.BasicInfo.TotalSizeBytes)}");
+    Console.WriteLine($"System Files Hidden: {report.SystemFiles.Count}");
+    Console.WriteLine($"Suggested Labels: {string.Join(", ", report.RequiredLabels)}");
 }
