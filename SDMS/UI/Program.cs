@@ -14,6 +14,29 @@ using SDMS.Infrastructure.Serialization;
 using SDMS.Domain.Models;
 using SDMS.Infrastructure.Execution;
 using SDMS.Domain.Execution;
+using System.Linq;
+
+
+// ── Encoding (MUST be first — before any Console I/O) ────────────────────────
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+Console.InputEncoding  = System.Text.Encoding.UTF8;
+
+// ── Reinitialize Console.In from the real keyboard device ────────────────────
+// After async/await the runtime's stdin StreamReader can reach an internal EOF
+// state and return "" from ReadLine() forever. Opening CONIN$ (Windows) or
+// /dev/tty (Linux/macOS) directly bypasses that poisoned stream entirely.
+// We do this ONCE at startup so every ReadLine() in the program works.
+try
+{
+    string conDevice = OperatingSystem.IsWindows() ? "CONIN$" : "/dev/tty";
+    var    conStream = new FileStream(conDevice, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    Console.SetIn(new StreamReader(conStream, System.Text.Encoding.UTF8));
+}
+catch
+{
+    // No TTY (e.g. CI pipeline) — Console.ReadLine() will still be attempted,
+    // prompts will just have no effect which is acceptable in that context.
+}
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -30,7 +53,7 @@ bool   compact        = false;
 bool   hidden         = false;
 bool   system         = false;
 bool   symlinks       = false;
-int?   maxDepth       = null;
+int?   maxDepth       = 5;   // default: 5 levels from the argument path (D:\ = 0)
 long?  maxFileBytes   = null;
 
 for (int i = 1; i < args.Length; i++)
@@ -61,11 +84,11 @@ for (int i = 1; i < args.Length; i++)
 
 var options = new ScanOptions
 {
-    FollowSymlinks    = symlinks,
-    IncludeHidden     = hidden,
+    FollowSymlinks     = symlinks,
+    IncludeHidden      = hidden,
     IncludeSystemFiles = system,
-    MaxDepth          = maxDepth,
-    MaxFileSizeBytes  = maxFileBytes,
+    MaxDepth           = maxDepth,
+    MaxFileSizeBytes   = maxFileBytes,
 };
 
 // Infrastructure layer — all OS-touching types.
@@ -120,7 +143,7 @@ Console.WriteLine(
     $"{tree.BasicInfo.TotalIgnoredFiles:N0} ignored " +
     $"in {elapsed.TotalSeconds:F2}s");
 
-// ── Analysis ──────────────────────────────────────────────────────────
+// ── Analysis ──────────────────────────────────────────────────────────────────
 var a = tree.BasicInfo;  // shorthand
 
 // Category breakdown
@@ -186,64 +209,154 @@ if (a.SkippedPaths.Count > 0)
     Console.WriteLine();
 }
 
-if (tree.BasicInfo.SkippedPaths.Count > 0)
-{
-    Console.WriteLine($"[scanner] {tree.BasicInfo.SkippedPaths.Count} path(s) skipped (permission/IO errors):");
-    foreach (var p in tree.BasicInfo.SkippedPaths.Take(10))
-        Console.WriteLine($"  • {p}");
-    if (tree.BasicInfo.SkippedPaths.Count > 10)
-        Console.WriteLine($"  … and {tree.BasicInfo.SkippedPaths.Count - 10} more.");
-}
+// ── Save filetree.json ────────────────────────────────────────────────────────
 
-// ── Save ──────────────────────────────────────────────────────────────────────
-
+string savedPath = output;
 if (scanner is Directoryscanner ds)
 {
-    var saved = await ds.SaveAsync(tree, output);
-    Console.WriteLine($"[scanner] FileTree written → {saved}");
+    savedPath = await ds.SaveAsync(tree, output);
+    Console.WriteLine($"[scanner] FileTree written → {savedPath}");
 }
+
+// =====================================================
+// MODULE 2 — MOVE SUGGESTION SUMMARY
+// Walks the FileTree already in memory — no disk I/O,
+// no JSON re-parse, no second directory walk.
+// =====================================================
+
+Console.WriteLine();
+Console.WriteLine("==================================================");
+Console.WriteLine("📌 SMART FILE MOVE RECOMMENDATION SUMMARY");
+Console.WriteLine("==================================================");
+
+string depthLabel = maxDepth.HasValue ? $"(max depth: {maxDepth})" : "(unlimited depth)";
+
+// AnalyzeFromTree walks the in-memory FileTree object directly.
+var recommendations = MoveSuggestionService.AnalyzeFromTree(tree, maxDepth);
+
+var recommended = recommendations
+    .Where(x => x.Probability >= 50)
+    .OrderByDescending(x => x.Probability)
+    .ToList();
+
+var highRecommended = recommended
+    .Where(x => x.Probability >= 80)
+    .ToList();
+
+Console.WriteLine($"📂 Total Files Analyzed {depthLabel}: {recommendations.Count}");
+Console.WriteLine($"✅ Files Recommended to Move (>=50%): {recommended.Count}");
+Console.WriteLine($"🔥 Highly Recommended (>=80%):        {highRecommended.Count}");
+Console.WriteLine("==================================================");
+Console.WriteLine();
+
+// ── Show highly recommended files ────────────────────────────────────────────
+Console.WriteLine("🔥 Highly Recommended Files (>=80%):");
+Console.WriteLine("--------------------------------------------------");
+
+if (highRecommended.Count == 0)
+{
+    Console.WriteLine("   None found.");
+}
+else
+{
+    foreach (var item in highRecommended)
+    {
+        string dest = string.IsNullOrEmpty(item.RecommendedFullPath)
+            ? $"📁 [NEW] {item.RecommendedFolder}"
+            : $"📁 {item.RecommendedFullPath}";
+        Console.WriteLine(
+            $"   📄 {item.FileName,-35} [in: {item.CurrentFolder,-20}]" +
+            $"  →  {dest} ({item.Probability}%)");
+    }
+}
+
+Console.WriteLine("--------------------------------------------------");
+Console.WriteLine();
+
+// ── Prompt for full list ──────────────────────────────────────────────────────
+Console.Out.Flush();
+Console.Write("Do you want to view ALL recommended files (>=50%)? (y/n): ");
+
+string input = Console.ReadLine()?.Trim().ToLowerInvariant() ?? string.Empty;
+Console.WriteLine();
+
+if (input == "y")
+{
+    if (recommended.Count == 0)
+    {
+        Console.WriteLine("   No files meet the >=50% threshold.");
+    }
+    else
+    {
+        Console.WriteLine("📌 All Recommended Files (>=50%):");
+        Console.WriteLine("--------------------------------------------------");
+
+        foreach (var item in recommended)
+        {
+            string dest = string.IsNullOrEmpty(item.RecommendedFullPath)
+                ? $"📁 [NEW] {item.RecommendedFolder}"
+                : $"📁 {item.RecommendedFullPath}";
+            Console.WriteLine(
+                $"   📄 {item.FileName,-35} [in: {item.CurrentFolder,-20}]" +
+                $"  →  {dest} ({item.Probability}%)");
+        }
+
+        Console.WriteLine("--------------------------------------------------");
+    }
+}
+
+Console.WriteLine();
+
+// =====================================================
+// MODULE 3 — EXECUTION ENGINE
+// Mocked FinalizedPlan — replace with real plan later.
+// =====================================================
+
+Console.WriteLine("==================================================");
+Console.WriteLine("⚙️  EXECUTION ENGINE");
+Console.WriteLine("==================================================");
 
 // --- Mocking a FinalizedPlan for testing ---
 var plan = new FinalizedPlan
 {
-    Id = Guid.NewGuid(),
+    Id           = Guid.NewGuid(),
     SourcePlanId = Guid.NewGuid(),
-    FinalizedAt = DateTime.UtcNow,
-    Operations = new List<PlannedOperation>
+    FinalizedAt  = DateTime.UtcNow,
+    Operations   = new List<PlannedOperation>
     {
         // --- Images ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\1.png", DestinationPath = @"H:\SDMSTest\Images\1.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\2.png", DestinationPath = @"H:\SDMSTest\Images\2.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\3.png", DestinationPath = @"H:\SDMSTest\Images\3.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\4.png", DestinationPath = @"H:\SDMSTest\Images\4.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\5.png", DestinationPath = @"H:\SDMSTest\Images\5.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\6.png", DestinationPath = @"H:\SDMSTest\Images\6.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\7.png", DestinationPath = @"H:\SDMSTest\Images\7.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Screenshot 2026-04-27 220440.png", DestinationPath = @"H:\SDMSTest\Images\Screenshot 2026-04-27 220440.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\1.png",                                   DestinationPath = @"H:\SDMSTest\Images\1.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\2.png",                                   DestinationPath = @"H:\SDMSTest\Images\2.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\3.png",                                   DestinationPath = @"H:\SDMSTest\Images\3.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\4.png",                                   DestinationPath = @"H:\SDMSTest\Images\4.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\5.png",                                   DestinationPath = @"H:\SDMSTest\Images\5.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\6.png",                                   DestinationPath = @"H:\SDMSTest\Images\6.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\7.png",                                   DestinationPath = @"H:\SDMSTest\Images\7.png",                                                                                         Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Screenshot 2026-04-27 220440.png",        DestinationPath = @"H:\SDMSTest\Images\Screenshot 2026-04-27 220440.png",                                                              Status = OpStatus.Confirmed, Reason = "Organizing Images"       },
 
         // --- Documents (Project Specific) ---
         new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.docx", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.pdf", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.docx", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.pdf", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.pdf",  DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.pdf",  Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.docx",               DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.docx",                                             Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.pdf",                DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.pdf",                                              Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
 
         // --- Documents (General) ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\L23-0662_SE_Activity.docx", DestinationPath = @"H:\SDMSTest\Documents\L23-0662_SE_Activity.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Personal Commitments.txt", DestinationPath = @"H:\SDMSTest\Documents\Personal Commitments.txt", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\SE Project Proposal - Copy.docx", DestinationPath = @"H:\SDMSTest\Documents\SE Project Proposal - Copy.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\L23-0662_SE_Activity.docx",               DestinationPath = @"H:\SDMSTest\Documents\L23-0662_SE_Activity.docx",                                                                  Status = OpStatus.Confirmed, Reason = "Sorting Documents"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Personal Commitments.txt",                DestinationPath = @"H:\SDMSTest\Documents\Personal Commitments.txt",                                                                    Status = OpStatus.Confirmed, Reason = "Sorting Documents"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\SE Project Proposal - Copy.docx",        DestinationPath = @"H:\SDMSTest\Documents\SE Project Proposal - Copy.docx",                                                             Status = OpStatus.Confirmed, Reason = "Sorting Documents"       },
 
         // --- Databases, HTML, Sheets ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\AnimeReleaseDB.accdb", DestinationPath = @"H:\SDMSTest\Database\AnimeReleaseDB.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Database1.accdb", DestinationPath = @"H:\SDMSTest\Database\Database1.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\calisthenics.html", DestinationPath = @"H:\SDMSTest\HTMLs\calisthenics.html", Status = OpStatus.Confirmed, Reason = "Web Sorting" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\VocalRange.xlsx", DestinationPath = @"H:\SDMSTest\Sheets\VocalRange.xlsx", Status = OpStatus.Confirmed, Reason = "Spreadsheet Sorting" },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\AnimeReleaseDB.accdb",                    DestinationPath = @"H:\SDMSTest\Database\AnimeReleaseDB.accdb",                                                                         Status = OpStatus.Confirmed, Reason = "Database Consolidation"  },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Database1.accdb",                         DestinationPath = @"H:\SDMSTest\Database\Database1.accdb",                                                                              Status = OpStatus.Confirmed, Reason = "Database Consolidation"  },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\calisthenics.html",                       DestinationPath = @"H:\SDMSTest\HTMLs\calisthenics.html",                                                                               Status = OpStatus.Confirmed, Reason = "Web Sorting"             },
+        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\VocalRange.xlsx",                         DestinationPath = @"H:\SDMSTest\Sheets\VocalRange.xlsx",                                                                                Status = OpStatus.Confirmed, Reason = "Spreadsheet Sorting"     },
 
         // --- Deletions ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\Default.rdp", Status = OpStatus.Confirmed, Reason = "Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\github-recovery-codes.txt", Status = OpStatus.Confirmed, Reason = "Security Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\My Cheat TablesExceptionAutoSave_noname.ct", Status = OpStatus.Confirmed, Reason = "Temp File Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\teest.srt", Status = OpStatus.Confirmed, Reason = "Junk Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\what.CEA", Status = OpStatus.Confirmed, Reason = "Cleanup" }
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\Default.rdp",                                                                                                                                                                    Status = OpStatus.Confirmed, Reason = "Cleanup"                 },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\github-recovery-codes.txt",                                                                                                                                                      Status = OpStatus.Confirmed, Reason = "Security Cleanup"        },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\My Cheat TablesExceptionAutoSave_noname.ct",                                                                                                                                     Status = OpStatus.Confirmed, Reason = "Temp File Cleanup"       },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\teest.srt",                                                                                                                                                                      Status = OpStatus.Confirmed, Reason = "Junk Cleanup"            },
+        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\what.CEA",                                                                                                                                                                       Status = OpStatus.Confirmed, Reason = "Cleanup"                 }
     }
 };
 
@@ -256,16 +369,19 @@ var validation = await executionEngine.PreflightAsync(plan);
 if (validation.IsValid)
 {
     // 3. Execute with your specific options
-    var exoptions = new ExecutionOptions 
-    { 
+    var exoptions = new ExecutionOptions
+    {
         UseStagingForDeletes = true,
-        DryRun = false 
+        DryRun               = false
     };
-    
+
     var log = await executionEngine.ExecuteAsync(plan, exoptions);
-    
+
     Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
 }
+
+Console.WriteLine();
+Console.WriteLine("✅ Done.");
 
 return 0;
 
@@ -275,8 +391,8 @@ static string TruncatePath(string path, int max) =>
     path.Length <= max ? path : "…" + path[^(max - 1)..];
 
 static void PrintHelp() => Console.WriteLine("""
-    SDMS — Directory Scanner  (Module 1)
-    =====================================
+    SDMS — Directory Scanner + Move Recommender
+    ============================================
     Usage: scanner <root-path> [options]
 
     Arguments:
@@ -289,24 +405,29 @@ static void PrintHelp() => Console.WriteLine("""
       --hidden             Include hidden files/dirs
       --system             Include system files/dirs
       --symlinks           Follow symbolic links (warning: may loop)
-      --depth   <n>        Max recursion depth    (default: unlimited)
+      --depth   <n>        Max recursion depth from <root-path>
+                             0 = root files only
+                             1 = root + 1 level of sub-folders
+                             (default: 5)
       --maxsize <bytes>    Skip files larger than this
       -h, --help           Show this help
 
     Examples:
-      scanner /home/user --depth 5 --hidden --output tree.json
-      scanner C:\Users   --format msgpack --output tree.msgpack
-      scanner /srv/data  --maxsize 104857600   # skip files > 100 MB
+      scanner D:\          --depth 3 --output tree.json
+      scanner /home/user   --hidden --depth 5
+      scanner C:\Users     --format msgpack --output tree.msgpack
     """);
 
-string FormatBytes(long bytes) => bytes switch
+static string FormatBytes(long bytes) => bytes switch
 {
-    < 1_024               => $"{bytes} B",
-    < 1_048_576           => $"{bytes / 1024.0:F1} KB",
-    < 1_073_741_824       => $"{bytes / 1_048_576.0:F1} MB",
-    _                     => $"{bytes / 1_073_741_824.0:F2} GB",
+    < 1_024         => $"{bytes} B",
+    < 1_048_576     => $"{bytes / 1024.0:F1} KB",
+    < 1_073_741_824 => $"{bytes / 1_048_576.0:F1} MB",
+    _               => $"{bytes / 1_073_741_824.0:F2} GB",
 };
+
 void Warn(string msg) => WriteColored("  [WARN] ", ConsoleColor.Yellow, msg);
+
 void WriteColored(string prefix, ConsoleColor color, string msg)
 {
     Console.ForegroundColor = color;

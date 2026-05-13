@@ -25,12 +25,11 @@ public sealed record FileNode
     public List<FileNode> Children { get; init; } = [];
     public string? SymlinkTarget { get; init; } = null;
     public string? Hash { get; set; } = null;
-
+    
     
     // for files only
     public int NumSiblings { get; set; }           // how many files share this folder
-
-    
+    public int Importance { get; set;}
     public string Extension => IsDirectory 
         ? string.Empty 
         : Path.GetExtension(Name).TrimStart('.').ToLowerInvariant();

@@ -15,7 +15,8 @@ public sealed class ScoringEngine : IScoringEngine
         var now   = DateTime.UtcNow;
         var files = report.SourceTree.Root.Children;
 
-        var hashCount = files
+         
+        var hashCount = files  
             .Where(f => f.Hash is not null)
             .GroupBy(f => f.Hash!)
             .ToDictionary(g => g.Key, g => g.Count());
