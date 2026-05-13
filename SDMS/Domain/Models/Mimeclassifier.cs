@@ -4,7 +4,7 @@
 /// Static lookup to map file extensions to broad MIME categories.
 /// Lookups are O(1) via an internal dictionary.
 /// </summary>
-public static class MineClassifier
+public static class Mimeclassifier
 {
     private static readonly IReadOnlyDictionary<string, string> ExtMap =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

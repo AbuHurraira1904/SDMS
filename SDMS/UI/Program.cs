@@ -242,22 +242,37 @@ catch (OperationCanceledException)
     return 3;
 }
 
+// 1. Show the Top 10 "High Importance" Files with Breakdown
+Console.WriteLine("\n[TOP 10 RANKED FILES - DETAILED BREAKDOWN]");
+Console.WriteLine($"{"SCORE",-6} | {"FILE NAME",-25} | {"REC",-5} | {"TYP",-5} | {"SIZ",-5} | {"PEN",-5} | {"RAW",-7}");
+Console.WriteLine(new string('-', 75));
+
 var topFiles = scoredNodes
     .OrderByDescending(f => f.Score)
     .Take(10);
 
 foreach (var scored in topFiles)
 {
-    // We pull the "raw" score from the breakdown your friend created
-    double raw = scored.ScoreBreakdown.GetValueOrDefault("raw", 0);
-    string fileName = scored.Node.Name.Length > 30 
-        ? scored.Node.Name[..27] + "..." 
+    var b = scored.ScoreBreakdown;
+    
+    // Aggregate penalties for a cleaner view
+    double penalties = b.GetValueOrDefault("dup_pen", 0) + b.GetValueOrDefault("sys_pen", 0);
+    
+    string fileName = scored.Node.Name.Length > 25 
+        ? scored.Node.Name[..22] + "..." 
         : scored.Node.Name;
 
-    Console.WriteLine($"{scored.Score,-6} | {fileName,-30} | {raw,15:F2}");
+    // Formatting the output into a diagnostic table
+    Console.WriteLine($"{scored.Score,-6} | " +
+                      $"{fileName,-25} | " +
+                      $"{b.GetValueOrDefault("recency", 0),-5:F1} | " +
+                      $"{b.GetValueOrDefault("type", 0),-5:F1} | " +
+                      $"{b.GetValueOrDefault("size", 0),-5:F1} | " +
+                      $"{penalties,-5:F1} | " +
+                      $"{b.GetValueOrDefault("raw", 0),-7:F2}");
 }
 
-// 2. Show a "Low Importance" sample (The Junk)
+// 2. Show "The Junk" with why it failed
 Console.WriteLine("\n[POTENTIAL JUNK (BOTTOM 3)]");
 var bottomFiles = scoredNodes
     .OrderBy(f => f.Score)
@@ -265,7 +280,15 @@ var bottomFiles = scoredNodes
 
 foreach (var scored in bottomFiles)
 {
-    Console.WriteLine($"  - {scored.Node.Name} (Score: {scored.Score})");
+    var b = scored.ScoreBreakdown;
+    double raw = b.GetValueOrDefault("raw", 0);
+    
+    // Identify the "killing blow" for the score
+    string reason = b.GetValueOrDefault("sys_pen", 0) > 0 ? "[System File]" :
+        b.GetValueOrDefault("dup_pen", 0) > 0 ? "[Duplicate]" : 
+        "[Old/Junk Type]";
+
+    Console.WriteLine($"  - {scored.Node.Name,-30} | Score: {scored.Score,-3} | {reason}");
 }
 
 // 3. Stats Summary

@@ -33,9 +33,12 @@ public sealed class ScoringEngine : IScoringEngine
             double recency = 10.0 * Math.Exp(-0.05 * Math.Max(0, (now - file.AccessedAt).TotalDays));
             double modified = 10.0 * Math.Exp(-0.05 * Math.Max(0, (now - file.ModifiedAt).TotalDays));
             
-            // Extension lookup
-            double type = weights.FileTypePriorityMap.TryGetValue(file.Extension.ToLower(), out int v) 
-                          ? Math.Clamp(v, 0, 10) : 5.0;
+            // 1. Get the broad category from your classifier
+            string category = Models.Mimeclassifier.Classify(file.Extension.TrimStart('.'));
+            
+            double type = weights.CategoryPriorityMap.TryGetValue(category, out int priority) 
+                ? priority 
+                : 5.0; // Default for "unknown"
 
             // Size Bell Curve (Sweet spot around 1MB)
             double size = file.SizeBytes > 0

@@ -32,20 +32,19 @@ public class ScoringWeights
     /// File type priority overrides. Extension → priority score (0–10).
     /// e.g. { ".pdf": 8, ".tmp": 1 }
     /// </summary>
-    public Dictionary<string, int> FileTypePriorityMap { get; init; } = new()
+    /// <summary>Priority based on broad MIME category.</summary>
+    public Dictionary<string, int> CategoryPriorityMap { get; init; } = new()
     {
-        [".pdf"]  = 8,
-        [".docx"] = 8,
-        [".xlsx"] = 7,
-        [".pptx"] = 7,
-        [".cs"]   = 7,
-        [".py"]   = 7,
-        [".jpg"]  = 5,
-        [".png"]  = 5,
-        [".mp4"]  = 4,
-        [".zip"]  = 3,
-        [".tmp"]  = 1,
-        [".log"]  = 1,
+        ["document"]   = 9,
+        ["code"]       = 8,
+        ["image"]      = 6,
+        ["video"]      = 6,
+        ["audio"]      = 5,
+        ["archive"]    = 4,
+        ["data"]       = 3,
+        ["executable"] = 1,
+        ["temp"]       = 0,
+        ["system"]     = 0
     };
 
     public static ScoringWeights Default => new();

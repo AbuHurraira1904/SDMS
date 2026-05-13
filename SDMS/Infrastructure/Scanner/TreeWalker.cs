@@ -53,7 +53,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
         _metrics.ExtensionSizes[ext] = _metrics.ExtensionSizes.GetValueOrDefault(ext) + meta.SizeBytes;
 
         // 2. Tally Categories (using your MimeClassifier logic)
-        string category = MineClassifier.Classify(ext); // e.g., "Image", "Video"
+        string category = Mimeclassifier.Classify(ext); // e.g., "Image", "Video"
         _metrics.CategoryCounts[category] = _metrics.CategoryCounts.GetValueOrDefault(category) + 1;
 
         // 3. Flagged Files
@@ -268,7 +268,7 @@ public sealed class TreeWalker : ITreeWalk_Interface
 
     private FileNode BuildFile(ExtractedMetaData fileMeta)
     {
-        string mimeType = MineClassifier.Classify(
+        string mimeType = Mimeclassifier.Classify(
             Path.GetExtension(fileMeta.Name).TrimStart('.').ToLowerInvariant());
         
         string relPath = Path.GetRelativePath(RootPath, fileMeta.FullPath);
