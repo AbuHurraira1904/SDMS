@@ -16,6 +16,8 @@ using SDMS.Infrastructure.Serialization;
 using SDMS.Domain.Models;
 using SDMS.Infrastructure.Execution;
 using SDMS.Domain.Execution;
+using SDMS.Domain.Scoring;
+using SDMS.Infrastructure.Scoring;
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -224,6 +226,55 @@ if (scanner is Directoryscanner ds)
     var saved = await ds.SaveAsync(tree, output);
     Console.WriteLine($"[scanner] FileTree written → {saved}");
 }
+
+// --- STEP 3: PRIORITIZE ---
+IScoringEngine scoringEngine = new ScoringEngine();
+// Use default weights for the first test
+List<ScoredFileNode> scoredNodes;
+
+try
+{
+    scoredNodes = await scoringEngine.ScoreAsync(report, null);
+}
+catch (OperationCanceledException)
+{
+    Console.Error.WriteLine("\n[scoring] Scoring cancelled.");
+    return 3;
+}
+
+var topFiles = scoredNodes
+    .OrderByDescending(f => f.Score)
+    .Take(10);
+
+foreach (var scored in topFiles)
+{
+    // We pull the "raw" score from the breakdown your friend created
+    double raw = scored.ScoreBreakdown.GetValueOrDefault("raw", 0);
+    string fileName = scored.Node.Name.Length > 30 
+        ? scored.Node.Name[..27] + "..." 
+        : scored.Node.Name;
+
+    Console.WriteLine($"{scored.Score,-6} | {fileName,-30} | {raw,15:F2}");
+}
+
+// 2. Show a "Low Importance" sample (The Junk)
+Console.WriteLine("\n[POTENTIAL JUNK (BOTTOM 3)]");
+var bottomFiles = scoredNodes
+    .OrderBy(f => f.Score)
+    .Take(3);
+
+foreach (var scored in bottomFiles)
+{
+    Console.WriteLine($"  - {scored.Node.Name} (Score: {scored.Score})");
+}
+
+// 3. Stats Summary
+Console.WriteLine("\n[ENGINE STATS]");
+Console.WriteLine($"  Total Scored:   {scoredNodes.Count}");
+Console.WriteLine($"  Average Score:  {scoredNodes.Average(f => f.Score):F1}");
+    
+Console.WriteLine("\n================================================================");
+Console.WriteLine("Pipeline Check: [SCAN: OK] -> [ANALYZE: OK] -> [SCORE: OK]");
 
 // --- Mocking a FinalizedPlan for testing ---
 var plan = new FinalizedPlan
