@@ -21,3 +21,4 @@ public interface IPlanGenerator
         IProgress<string>? progress = null,
         CancellationToken ct = default);
 }
+
