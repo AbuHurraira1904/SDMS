@@ -1,4 +1,4 @@
-﻿using System.IO;
+﻿/*using System.IO;
 using System.Windows;
 using SDMS.Application;
 using SDMS.Domain.Scanner;
@@ -304,4 +304,4 @@ public partial class App : System.Windows.Application
     // ── AllocConsole — opens a console window in a WPF process ───────────────
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]
     private static extern bool AllocConsole();
-}
+}*/
