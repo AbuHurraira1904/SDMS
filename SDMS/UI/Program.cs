@@ -17,6 +17,7 @@ using SDMS.Domain.Models;
 using SDMS.Infrastructure.Execution;
 using SDMS.Domain.Execution;
 using SDMS.Domain.Scoring;
+using SDMS.Infrastructure.PlanEditor;
 using SDMS.Infrastructure.Scoring;
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
@@ -299,12 +300,12 @@ Console.WriteLine($"  Average Score:  {scoredNodes.Average(f => f.Score):F1}");
 Console.WriteLine("\n================================================================");
 Console.WriteLine("Pipeline Check: [SCAN: OK] -> [ANALYZE: OK] -> [SCORE: OK]");
 
-// --- Mocking a FinalizedPlan for testing ---
-var plan = new FinalizedPlan
+// --- Mocking a ProposedPlan for Editor Testing ---
+var mockProposedPlan = new ProposedPlan
 {
     Id = Guid.NewGuid(),
-    SourcePlanId = Guid.NewGuid(),
-    FinalizedAt = DateTime.UtcNow,
+    GeneratedAt = DateTime.UtcNow,
+    // Reuse your existing list of operations here
     Operations = new List<PlannedOperation>
     {
         // --- Images ---
@@ -343,27 +344,66 @@ var plan = new FinalizedPlan
     }
 };
 
-// 1. Initialize the Engine
-IExecutionEngine executionEngine = new ExecutionEngine();
+// 1. Load the editor with the AI's plan
+var editor = new PlanEditor(mockProposedPlan);
 
-// 2. Run Preflight before committing
-var validation = await executionEngine.PreflightAsync(plan);
+Console.WriteLine("Testing Plan Editor edits...");
 
-if (validation.IsValid)
+// --- Simulate a "Rescue" Edit ---
+// User decides NOT to delete the recovery codes
+var recoveryCodesOp = editor.CurrentOperations.First(o => o.SourcePath.Contains("github-recovery-codes.txt"));
+editor.SetStatus(recoveryCodesOp.Id, OpStatus.Skipped); 
+Console.WriteLine("RESCUED: github-recovery-codes.txt (Status set to Skipped)");
+
+// --- Simulate a "Destination Change" Edit ---
+// User wants 1.png in 'Photos' instead of 'Images'
+var firstImage = editor.CurrentOperations.First(o => o.SourcePath.Contains("1.png"));
+// Use your Clone method, then manually update the property
+var updatedImageOp = firstImage.Clone();
+updatedImageOp.DestinationPath = @"H:\SDMSTest\Photos\1.png";
+
+editor.UpdateOperation(firstImage.Id, updatedImageOp);
+Console.WriteLine(@"CHANGED: 1.png destination updated to \Photos\");
+
+// --- Testing Undo ---
+if (editor.CanUndo)
 {
-    // 3. Execute with your specific options
-    var exoptions = new ExecutionOptions 
-    { 
-        UseStagingForDeletes = true,
-        DryRun = false 
-    };
-    
-    var log = await executionEngine.ExecuteAsync(plan, exoptions);
-    
-    Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
+    editor.Undo();
+    Console.WriteLine(@"UNDO: Reverted 1.png destination back to \Images\");
 }
 
+// --- PHASE 2: THE HAND-OFF ---
+var finalCheck = editor.ValidatePlan();
+if (finalCheck.IsValid)
+{
+    // The Editor produces the 'final' plan here
+    FinalizedPlan final = editor.Finalize(mockProposedPlan);
 
+    // --- PHASE 3: PHYSICAL EXECUTION (The logic you provided) ---
+    // 1. Initialize the Engine
+    IExecutionEngine executionEngine = new ExecutionEngine();
+
+    // 2. Run Preflight (Checks for disk space, write permissions, etc.)
+    var validation = await executionEngine.PreflightAsync(final);
+
+    if (validation.IsValid)
+    {
+        // 3. Commit the changes to the H: drive
+        var exoptions = new ExecutionOptions 
+        { 
+            UseStagingForDeletes = true, // Moves to Recycle Bin instead of hard delete
+            DryRun = false               // Set to true if you just want to test logs
+        };
+        
+        var log = await executionEngine.ExecuteAsync(final, exoptions);
+        
+        Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
+    }
+    else 
+    {
+        Console.WriteLine("Preflight failed! Check if paths are still valid.");
+    }
+}
 
 return 0;
 

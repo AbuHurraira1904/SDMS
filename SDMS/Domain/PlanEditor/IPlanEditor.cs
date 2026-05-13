@@ -1,4 +1,3 @@
-using System.Buffers;
 using SDMS.Domain.Models;
 
 namespace SDMS.Domain.PlanEditor;
@@ -56,7 +55,7 @@ public interface IPlanEditor
     ValidationResult RemoveOperation(Guid operationId);
 
     /// <summary>Change the status of an operation (Approve, Skip, etc.).</summary>
-    ValidationResult SetStatus(Guid operationId, OperationStatus status);
+    ValidationResult SetStatus(Guid operationId, OpStatus status);
 
     // --- Undo/Redo ---
 
