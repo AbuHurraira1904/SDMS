@@ -23,6 +23,6 @@ public sealed record PlanOp
     public          string?  Destination { get; init; }
     public required string   Reason      { get; init; }
     public required double   Confidence  { get; init; }
-    public required double   Importance  { get; init; }
+    public required float   Importance  { get; init; }
     public required string   Status      { get; init; }   // always "Pending" from Python
 }

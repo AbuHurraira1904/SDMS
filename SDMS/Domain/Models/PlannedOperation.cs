@@ -29,7 +29,7 @@ public class PlannedOperation
     public string? DestinationPath { get; set; }
     public string Reason { get; init; }           // Explainability
     public double Confidence { get; init; }        // 0.0–1.0
-    public int Importance { get; init; }           // For UI sorting
+    public float Importance { get; init; }           // For UI sorting
     public bool IsUserAdded { get; init; }         // Manual vs Brain-generated
     public bool IsDirectoryOp => Type switch
     {

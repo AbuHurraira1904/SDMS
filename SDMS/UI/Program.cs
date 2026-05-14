@@ -1,22 +1,16 @@
-// ============================================================
-// Program.cs  →  SDMS.UI/
-// CLI entry point — wires all dependencies manually and calls
-// IDirectoryScanner.ScanAsync().
-// Zero business logic lives here. Swap for Microsoft.Extensions.DI
-// or any other container without touching any other file.
-// ============================================================
-
 using System.IO;
 using SDMS.Application;
-using SDMS.Domain.Scanner;
 using SDMS.Domain.Analysis;
+using SDMS.Domain.Scanner;
 using SDMS.Infrastructure.Scanner;
-using SDMS.Infrastructure.Analysis;
 using SDMS.Infrastructure.Serialization;
 using SDMS.Domain.Models;
 using SDMS.Infrastructure.Execution;
 using SDMS.Domain.Execution;
+using SDMS.Domain.Brain;
 using SDMS.Domain.Scoring;
+using SDMS.Infrastructure.Analysis;
+using SDMS.Infrastructure.Brain;
 using SDMS.Infrastructure.PlanEditor;
 using SDMS.Infrastructure.Scoring;
 
@@ -28,15 +22,16 @@ if (args.Length == 0 || args[0] is "-h" or "--help")
     return 0;
 }
 
-string root           = args[0];
-string output         = "filetree.json";
-string format         = "json";
-bool   compact        = false;
-bool   hidden         = false;
-bool   system         = false;
-bool   symlinks       = false;
-int?   maxDepth       = null;
-long?  maxFileBytes   = null;
+string root         = args[0];
+string output       = "filetree.json";
+string format       = "json";
+bool   compact      = false;
+bool   hidden       = false;
+bool   system       = false;
+bool   symlinks     = false;
+bool   dryRun       = false;
+int?   maxDepth     = null;
+long?  maxFileBytes = null;
 
 for (int i = 1; i < args.Length; i++)
 {
@@ -52,6 +47,7 @@ for (int i = 1; i < args.Length; i++)
         case "--hidden":   hidden   = true; break;
         case "--system":   system   = true; break;
         case "--symlinks": symlinks = true; break;
+        case "--dry-run":  dryRun   = true; break;
         case "--depth"   when i + 1 < args.Length:
             maxDepth = int.Parse(args[++i]); break;
         case "--maxsize" when i + 1 < args.Length:
@@ -62,18 +58,30 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
+// ── Brain config ──────────────────────────────────────────────────────────────
+// BrainFolder is the directory containing api.py and the .venv folder.
+// Change this to your actual Brain folder path, or read from an env var.
+
+string brainFolder = Environment.GetEnvironmentVariable("SDMS_BRAIN_FOLDER")
+    ?? Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Brain");
+
+brainFolder = Path.GetFullPath(brainFolder);
+
+string pythonExe = Path.Combine(brainFolder, ".venv", "Scripts", "python.exe");
+string apiScript = Path.Combine(brainFolder, "api.py");
+string brainUrl  = "http://127.0.0.1:5000";
+
 // ── Dependency wiring ─────────────────────────────────────────────────────────
 
 var options = new ScanOptions
 {
-    FollowSymlinks    = symlinks,
-    IncludeHidden     = hidden,
+    FollowSymlinks     = symlinks,
+    IncludeHidden      = hidden,
     IncludeSystemFiles = system,
-    MaxDepth          = maxDepth,
-    MaxFileSizeBytes  = maxFileBytes,
+    MaxDepth           = maxDepth,
+    MaxFileSizeBytes   = maxFileBytes,
 };
 
-// Infrastructure layer — all OS-touching types.
 IMetaDataExtractor_Interface metaExtractor = new MetaDataExtractor();
 ISysLinkGuard_Interface      symlinkGuard  = new SysLinkGuard();
 IMountDectector_Interface    mountDetector = new MountDetector();
@@ -83,18 +91,16 @@ ITreeSerializer_Interface serializer = format == "msgpack"
     ? new Msgtreeserializer()
     : new JSONTreeSerializer(compact);
 
-// Application layer — orchestrating facade.
 IDirectoryScanner scanner = new Directoryscanner(walker, serializer);
 
 // ── Progress display ──────────────────────────────────────────────────────────
 
 var progress = new Progress<(int FilesScanned, string CurrentPath)>(report =>
 {
-    // Overwrite the current line so the terminal doesn't scroll on large scans.
     Console.Write($"\r[scanner] {report.FilesScanned:N0} files … {TruncatePath(report.CurrentPath, 60)}   ");
 });
 
-// ── Run the scan ──────────────────────────────────────────────────────────────
+// ── Step 1: Scan ──────────────────────────────────────────────────────────────
 
 Console.WriteLine($"[scanner] Starting scan of '{root}' …");
 
@@ -114,102 +120,14 @@ catch (OperationCanceledException)
     return 3;
 }
 
-// Clear the progress line.
 Console.WriteLine();
 
 var elapsed = DateTime.UtcNow - tree.ScannedAt;
 Console.WriteLine(
-    $"[scanner] Done — " +
-    $"in {elapsed.TotalSeconds:F2}s");
-
-// 2. Analysis Engine (Compute Bound)
-IAnalysisEngine analysisEngine = new AnalysisEngine();
-AnalysisReport report;
-try
-{
-    report = await analysisEngine.AnalyzeAsync(tree);
-}
-catch (OperationCanceledException)
-{
-    Console.Error.WriteLine("\n[analysis] Analysis cancelled.");
-    return 3;
-}
-
-// 3. Result Review
-Console.WriteLine(
-    $"[analysis] Done — for {report.SourceTree.ScanRootPath} " + 
-    $"{report.FileTypeDistribution.Values.Sum()} files, " +
+    $"[scanner] Done — {tree.BasicInfo.TotalFiles:N0} files, " +
     $"{tree.BasicInfo.TotalDirectories:N0} dirs, " +
-    $"{tree.BasicInfo.TotalSizeBytes:N0} bytes, " +
-    $"{tree.BasicInfo.TotalIgnoredFiles:N0} ignored ");
-
-Console.WriteLine($"Required Labels: {string.Join(", ", report.RequiredLabels)}");
-
-// ── Analysis ──────────────────────────────────────────────────────────
-var a = tree.BasicInfo;  // shorthand
-
-// Category breakdown
-Console.WriteLine("  ┌─ Categories ─────────────────────────────────");
-foreach (var kv in a.CategoryCounts.OrderByDescending(x => x.Value).Take(10))
-    Console.WriteLine($"  │  {kv.Key,-14} {kv.Value,6:N0} files   {FormatBytes(a.CategorySizes.GetValueOrDefault(kv.Key))}");
-Console.WriteLine("  └─────────────────────────────────────────────");
-Console.WriteLine();
-
-// Top 10 extensions by count
-Console.WriteLine("  ┌─ Top Extensions (by count) ──────────────────");
-foreach (var kv in a.ExtensionCounts.OrderByDescending(x => x.Value).Take(10))
-    Console.WriteLine($"  │  .{kv.Key,-13} {kv.Value,6:N0} files   {FormatBytes(a.ExtensionSizes.GetValueOrDefault(kv.Key))}");
-Console.WriteLine("  └─────────────────────────────────────────────");
-Console.WriteLine();
-
-// Timestamps
-Console.WriteLine("  ┌─ File Age ───────────────────────────────────");
-Console.WriteLine($"  │  Oldest file  : {(a.OldestFile == DateTime.MaxValue ? "n/a" : a.OldestFile.ToString("yyyy-MM-dd"))}");
-Console.WriteLine($"  │  Newest file  : {(a.NewestFile == DateTime.MinValue ? "n/a" : a.NewestFile.ToString("yyyy-MM-dd"))}");
-Console.WriteLine("  └─────────────────────────────────────────────");
-Console.WriteLine();
-
-// Immediate subdirs
-Console.WriteLine("  ┌─ Immediate Subdirectories (by size) ─────────");
-foreach (var d in a.ImmediateSubDirs.OrderByDescending(x => x.Size).Take(10))
-    Console.WriteLine($"  │  {FormatBytes(d.Size),10}   {d.Name}");
-Console.WriteLine("  └─────────────────────────────────────────────");
-Console.WriteLine();
-
-// Flagged paths — hidden
-if (a.HiddenPaths.Count > 0)
-{
-    Console.WriteLine($"  ┌─ Hidden files ({a.HiddenPaths.Count:N0} total) ─────────────────");
-    foreach (var p in a.HiddenPaths.Take(10))
-        Console.WriteLine($"  │  {p}");
-    if (a.HiddenPaths.Count > 10)
-        Console.WriteLine($"  │  … and {a.HiddenPaths.Count - 10} more");
-    Console.WriteLine("  └─────────────────────────────────────────────");
-    Console.WriteLine();
-}
-
-// Flagged paths — system
-if (a.SystemPaths.Count > 0)
-{
-    Console.WriteLine($"  ┌─ System files ({a.SystemPaths.Count:N0} total) ─────────────────");
-    foreach (var p in a.SystemPaths.Take(10))
-        Console.WriteLine($"  │  {p}");
-    if (a.SystemPaths.Count > 10)
-        Console.WriteLine($"  │  … and {a.SystemPaths.Count - 10} more");
-    Console.WriteLine("  └─────────────────────────────────────────────");
-    Console.WriteLine();
-}
-
-// Skipped paths — permission / IO errors
-if (a.SkippedPaths.Count > 0)
-{
-    Warn($"{a.SkippedPaths.Count} path(s) skipped (permission / IO errors):");
-    foreach (var p in a.SkippedPaths.Take(10))
-        Console.WriteLine($"    • {p}");
-    if (a.SkippedPaths.Count > 10)
-        Console.WriteLine($"    … and {a.SkippedPaths.Count - 10} more");
-    Console.WriteLine();
-}
+    $"{tree.BasicInfo.TotalSizeBytes:N0} bytes " +
+    $"in {elapsed.TotalSeconds:F2}s");
 
 if (tree.BasicInfo.SkippedPaths.Count > 0)
 {
@@ -220,189 +138,182 @@ if (tree.BasicInfo.SkippedPaths.Count > 0)
         Console.WriteLine($"  … and {tree.BasicInfo.SkippedPaths.Count - 10} more.");
 }
 
-// ── Save ──────────────────────────────────────────────────────────────────────
+// ── Step 2: Save FileTree ─────────────────────────────────────────────────────
 
+string savedPath;
 if (scanner is Directoryscanner ds)
 {
-    var saved = await ds.SaveAsync(tree, output);
-    Console.WriteLine($"[scanner] FileTree written → {saved}");
+    savedPath = await ds.SaveAsync(tree, output);
+    Console.WriteLine($"[scanner] FileTree written → {savedPath}");
+}
+else
+{
+    Console.Error.WriteLine("[scanner] Could not save FileTree — unexpected scanner type.");
+    return 4;
 }
 
-// --- STEP 3: PRIORITIZE ---
-IScoringEngine scoringEngine = new ScoringEngine();
-// Use default weights for the first test
-List<ScoredFileNode> scoredNodes;
+// ── Step 3: Start brain process ───────────────────────────────────────────────
+
+using var brainManager = new BrainProcessManager(pythonExe, apiScript, brainUrl);
 
 try
 {
-    scoredNodes = await scoringEngine.ScoreAsync(report, null);
+    Console.WriteLine("[brain] Starting Python brain server…");
+    Console.WriteLine($"[brain] python  → {pythonExe}");
+    Console.WriteLine($"[brain] api.py  → {apiScript}");
+    await brainManager.StartAsync();
 }
-catch (OperationCanceledException)
+catch (TimeoutException ex)
 {
-    Console.Error.WriteLine("\n[scoring] Scoring cancelled.");
-    return 3;
+    Console.Error.WriteLine($"[brain] {ex.Message}");
+    return 5;
 }
-
-// 1. Show the Top 10 "High Importance" Files with Breakdown
-Console.WriteLine("\n[TOP 10 RANKED FILES - DETAILED BREAKDOWN]");
-Console.WriteLine($"{"SCORE",-6} | {"FILE NAME",-25} | {"REC",-5} | {"TYP",-5} | {"SIZ",-5} | {"PEN",-5} | {"RAW",-7}");
-Console.WriteLine(new string('-', 75));
-
-var topFiles = scoredNodes
-    .OrderByDescending(f => f.Score)
-    .Take(10);
-
-foreach (var scored in topFiles)
+catch (InvalidOperationException ex)
 {
-    var b = scored.ScoreBreakdown;
-    
-    // Aggregate penalties for a cleaner view
-    double penalties = b.GetValueOrDefault("dup_pen", 0) + b.GetValueOrDefault("sys_pen", 0);
-    
-    string fileName = scored.Node.Name.Length > 25 
-        ? scored.Node.Name[..22] + "..." 
-        : scored.Node.Name;
-
-    // Formatting the output into a diagnostic table
-    Console.WriteLine($"{scored.Score,-6} | " +
-                      $"{fileName,-25} | " +
-                      $"{b.GetValueOrDefault("recency", 0),-5:F1} | " +
-                      $"{b.GetValueOrDefault("type", 0),-5:F1} | " +
-                      $"{b.GetValueOrDefault("size", 0),-5:F1} | " +
-                      $"{penalties,-5:F1} | " +
-                      $"{b.GetValueOrDefault("raw", 0),-7:F2}");
+    Console.Error.WriteLine($"[brain] Failed to start brain process: {ex.Message}");
+    Console.Error.WriteLine($"[brain] Check that python.exe exists at: {pythonExe}");
+    return 5;
 }
 
-// 2. Show "The Junk" with why it failed
-Console.WriteLine("\n[POTENTIAL JUNK (BOTTOM 3)]");
-var bottomFiles = scoredNodes
-    .OrderBy(f => f.Score)
-    .Take(3);
+// ── Step 4: Send FileTree path to brain, get plan back ───────────────────────
 
-foreach (var scored in bottomFiles)
+Console.WriteLine("[brain] Sending scan to brain for analysis…");
+
+using var brainClient = new BrainClient(brainUrl);
+
+PlanOutput planOutput;
+try
 {
-    var b = scored.ScoreBreakdown;
-    double raw = b.GetValueOrDefault("raw", 0);
-    
-    // Identify the "killing blow" for the score
-    string reason = b.GetValueOrDefault("sys_pen", 0) > 0 ? "[System File]" :
-        b.GetValueOrDefault("dup_pen", 0) > 0 ? "[Duplicate]" : 
-        "[Old/Junk Type]";
-
-    Console.WriteLine($"  - {scored.Node.Name,-30} | Score: {scored.Score,-3} | {reason}");
+    planOutput = await brainClient.AnalyzeAsync(
+        fileTreeJsonPath : Path.GetFullPath(savedPath),
+        readContent      : false,
+        allowHidden      : hidden,
+        allowSystem      : system
+    );
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine($"[brain] Analysis failed: {ex.Message}");
+    return 6;
+}
+catch (InvalidDataException ex)
+{
+    Console.Error.WriteLine($"[brain] Bad response from brain: {ex.Message}");
+    return 7;
 }
 
-// 3. Stats Summary
-Console.WriteLine("\n[ENGINE STATS]");
-Console.WriteLine($"  Total Scored:   {scoredNodes.Count}");
-Console.WriteLine($"  Average Score:  {scoredNodes.Average(f => f.Score):F1}");
-    
-Console.WriteLine("\n================================================================");
-Console.WriteLine("Pipeline Check: [SCAN: OK] -> [ANALYZE: OK] -> [SCORE: OK]");
+Console.WriteLine($"[brain] Plan received — {planOutput.Operations.Count} operations, " +
+                  $"{planOutput.Safety.SafeOperations} safe, " +
+                  $"{planOutput.Safety.BlockedOperations} blocked.");
 
-// --- Mocking a ProposedPlan for Editor Testing ---
-var mockProposedPlan = new ProposedPlan
+Console.WriteLine("\n=== PLAN OUTPUT ===");
+Console.WriteLine($"Scan Root: {planOutput?.ScanRoot}");
+Console.WriteLine($"Total Files: {planOutput?.TotalFilesScanned}");
+
+Console.WriteLine("\n=== SAFETY ===");
+Console.WriteLine($"Total Ops: {planOutput?.Safety.TotalOperations}");
+Console.WriteLine($"Safe Ops: {planOutput?.Safety.SafeOperations}");
+Console.WriteLine($"Blocked Ops: {planOutput?.Safety.BlockedOperations}");
+
+Console.WriteLine("\n=== OPERATIONS ===");
+foreach (var op in planOutput?.Operations ?? [])
 {
-    Id = Guid.NewGuid(),
-    GeneratedAt = DateTime.UtcNow,
-    // Reuse your existing list of operations here
-    Operations = new List<PlannedOperation>
-    {
-        // --- Images ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\1.png", DestinationPath = @"H:\SDMSTest\Images\1.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\2.png", DestinationPath = @"H:\SDMSTest\Images\2.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\3.png", DestinationPath = @"H:\SDMSTest\Images\3.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\4.png", DestinationPath = @"H:\SDMSTest\Images\4.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\5.png", DestinationPath = @"H:\SDMSTest\Images\5.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\6.png", DestinationPath = @"H:\SDMSTest\Images\6.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\7.png", DestinationPath = @"H:\SDMSTest\Images\7.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Screenshot 2026-04-27 220440.png", DestinationPath = @"H:\SDMSTest\Images\Screenshot 2026-04-27 220440.png", Status = OpStatus.Confirmed, Reason = "Organizing Images" },
+    Console.WriteLine("--------------------------------");
+    Console.WriteLine($"Type        : {op.OpType}");
+    Console.WriteLine($"Source      : {op.Source}");
+    Console.WriteLine($"Destination : {op.Destination}");
+    Console.WriteLine($"Reason      : {op.Reason}");
+    Console.WriteLine($"Confidence  : {op.Confidence}");
+    Console.WriteLine($"Importance  : {op.Importance}");
+    Console.WriteLine($"Status      : {op.Status}");
+}
 
-        // --- Documents (Project Specific) ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.docx", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Anime Genre Classifier from Cover Art using CNNs.pdf", DestinationPath = @"H:\SDMSTest\Documents\Anime Genre Classifier from Cover Art using CNNs\Anime Genre Classifier from Cover Art using CNNs.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.docx", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.docx", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\HCI Project Proposal.pdf", DestinationPath = @"H:\SDMSTest\Documents\HCI Project Proposal\HCI Project Proposal.pdf", Status = OpStatus.Confirmed, Reason = "Grouping Project Files" },
+// ── Step 5: Map PlanOutput → FinalizedPlan ────────────────────────────────────
 
-        // --- Documents (General) ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\L23-0662_SE_Activity.docx", DestinationPath = @"H:\SDMSTest\Documents\L23-0662_SE_Activity.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Personal Commitments.txt", DestinationPath = @"H:\SDMSTest\Documents\Personal Commitments.txt", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\SE Project Proposal - Copy.docx", DestinationPath = @"H:\SDMSTest\Documents\SE Project Proposal - Copy.docx", Status = OpStatus.Confirmed, Reason = "Sorting Documents" },
+FinalizedPlan plan;
+try
+{
+    plan = planOutput.ToFinalizedPlan();
+    Console.Write(plan);
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine($"[mapping] Failed to map plan: {ex.Message}");
+    return 8;
+}
 
-        // --- Databases, HTML, Sheets ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\AnimeReleaseDB.accdb", DestinationPath = @"H:\SDMSTest\Database\AnimeReleaseDB.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\Database1.accdb", DestinationPath = @"H:\SDMSTest\Database\Database1.accdb", Status = OpStatus.Confirmed, Reason = "Database Consolidation" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\calisthenics.html", DestinationPath = @"H:\SDMSTest\HTMLs\calisthenics.html", Status = OpStatus.Confirmed, Reason = "Web Sorting" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Move, SourcePath = @"H:\SDMSTest\VocalRange.xlsx", DestinationPath = @"H:\SDMSTest\Sheets\VocalRange.xlsx", Status = OpStatus.Confirmed, Reason = "Spreadsheet Sorting" },
+Console.WriteLine($"[mapping] Mapped {plan.Operations.Count} operations.");
 
-        // --- Deletions ---
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\Default.rdp", Status = OpStatus.Confirmed, Reason = "Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\github-recovery-codes.txt", Status = OpStatus.Confirmed, Reason = "Security Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\My Cheat TablesExceptionAutoSave_noname.ct", Status = OpStatus.Confirmed, Reason = "Temp File Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\teest.srt", Status = OpStatus.Confirmed, Reason = "Junk Cleanup" },
-        new() { Id = Guid.NewGuid(), Type = OpType.Delete, SourcePath = @"H:\SDMSTest\what.CEA", Status = OpStatus.Confirmed, Reason = "Cleanup" }
-    }
+// ── Step 6: Print operation summary ──────────────────────────────────────────
+
+Console.WriteLine();
+Console.WriteLine("  ┌─ Planned Operations ─────────────────────────");
+var grouped = plan.Operations
+    .GroupBy(op => op.Type)
+    .OrderByDescending(g => g.Count());
+foreach (var g in grouped)
+    Console.WriteLine($"  │  {g.Key,-14} {g.Count(),4} ops");
+Console.WriteLine("  └─────────────────────────────────────────────");
+Console.WriteLine();
+
+if (dryRun)
+{
+    Console.WriteLine("[execution] Dry-run mode — skipping execution.");
+    return 0;
+}
+
+// ── Step 7: Preflight ─────────────────────────────────────────────────────────
+
+IExecutionEngine executionEngine = new ExecutionEngine();
+
+Console.WriteLine("[execution] Running preflight checks…");
+var validation = await executionEngine.PreflightAsync(plan);
+
+if (!validation.IsValid)
+{
+    Console.Error.WriteLine("[execution] Preflight failed — aborting.");
+    foreach (var err in validation.Errors)
+        Console.Error.WriteLine($"  • {err}");
+    return 9;
+}
+
+if (validation.Warnings.Count > 0)
+{
+    foreach (var w in validation.Warnings)
+        Console.WriteLine($"  [WARN] {w}");
+}
+
+Console.WriteLine("[execution] Preflight passed.");
+
+// ── Step 8: Execute ───────────────────────────────────────────────────────────
+
+var execOptions = new ExecutionOptions
+{
+    UseStagingForDeletes = true,
+    DryRun               = false,
+    RollbackOnFailure    = true,
 };
 
-// 1. Load the editor with the AI's plan
-var editor = new PlanEditor(mockProposedPlan);
-
-Console.WriteLine("Testing Plan Editor edits...");
-
-// --- Simulate a "Rescue" Edit ---
-// User decides NOT to delete the recovery codes
-var recoveryCodesOp = editor.CurrentOperations.First(o => o.SourcePath.Contains("github-recovery-codes.txt"));
-editor.SetStatus(recoveryCodesOp.Id, OpStatus.Skipped); 
-Console.WriteLine("RESCUED: github-recovery-codes.txt (Status set to Skipped)");
-
-// --- Simulate a "Destination Change" Edit ---
-// User wants 1.png in 'Photos' instead of 'Images'
-var firstImage = editor.CurrentOperations.First(o => o.SourcePath.Contains("1.png"));
-// Use your Clone method, then manually update the property
-var updatedImageOp = firstImage.Clone();
-updatedImageOp.DestinationPath = @"H:\SDMSTest\Photos\1.png";
-
-editor.UpdateOperation(firstImage.Id, updatedImageOp);
-Console.WriteLine(@"CHANGED: 1.png destination updated to \Photos\");
-
-// --- Testing Undo ---
-if (editor.CanUndo)
+var execProgress = new Progress<(int Completed, int Total, PlannedOperation Current)>(report =>
 {
-    editor.Undo();
-    Console.WriteLine(@"UNDO: Reverted 1.png destination back to \Images\");
-}
+    Console.Write($"\r[execution] {report.Completed}/{report.Total} — {report.Current.Type}: {TruncatePath(report.Current.SourcePath ?? "", 50)}   ");
+});
 
-// --- PHASE 2: THE HAND-OFF ---
-var finalCheck = editor.ValidatePlan();
-if (finalCheck.IsValid)
+Console.WriteLine("[execution] Executing plan…");
+var log = await executionEngine.ExecuteAsync(plan, execOptions, execProgress);
+Console.WriteLine();
+
+// ── Step 9: Report results ────────────────────────────────────────────────────
+
+Console.WriteLine($"[execution] Finished — {log.SuccessCount} succeeded, {log.FailureCount} failed. State: {log.FinalState}");
+
+if (log.FailureCount > 0)
 {
-    // The Editor produces the 'final' plan here
-    FinalizedPlan final = editor.Finalize(mockProposedPlan);
-
-    // --- PHASE 3: PHYSICAL EXECUTION (The logic you provided) ---
-    // 1. Initialize the Engine
-    IExecutionEngine executionEngine = new ExecutionEngine();
-
-    // 2. Run Preflight (Checks for disk space, write permissions, etc.)
-    var validation = await executionEngine.PreflightAsync(final);
-
-    if (validation.IsValid)
-    {
-        // 3. Commit the changes to the H: drive
-        var exoptions = new ExecutionOptions 
-        { 
-            UseStagingForDeletes = true, // Moves to Recycle Bin instead of hard delete
-            DryRun = false               // Set to true if you just want to test logs
-        };
-        
-        var log = await executionEngine.ExecuteAsync(final, exoptions);
-        
-        Console.WriteLine($"[Execution] Completed with {log.SuccessCount} successes.");
-    }
-    else 
-    {
-        Console.WriteLine("Preflight failed! Check if paths are still valid.");
-    }
+    Console.WriteLine();
+    Console.Error.WriteLine("[execution] Failed operations:");
+    foreach (var result in log.Results.Where(r => !r.Success))
+        Console.Error.WriteLine($"  • [{result.OperationType}] {result.ErrorMessage}");
+    return 10;
 }
 
 return 0;
@@ -413,23 +324,28 @@ static string TruncatePath(string path, int max) =>
     path.Length <= max ? path : "…" + path[^(max - 1)..];
 
 static void PrintHelp() => Console.WriteLine("""
-    SDMS — Directory Scanner  (Module 1)
-    =====================================
+    SDMS — Directory Scanner + Brain
+    ==================================
     Usage: scanner <root-path> [options]
 
     Arguments:
       <root-path>          Directory to scan (required)
 
     Options:
-      --output  <path>     Output file path       (default: filetree.json)
-      --format  <fmt>      json | msgpack          (default: json)
+      --output  <path>     FileTree output path    (default: filetree.json)
+      --format  <fmt>      json | msgpack           (default: json)
       --compact            Compact JSON, no indent
       --hidden             Include hidden files/dirs
       --system             Include system files/dirs
-      --symlinks           Follow symbolic links (warning: may loop)
-      --depth   <n>        Max recursion depth    (default: unlimited)
+      --symlinks           Follow symbolic links
+      --depth   <n>        Max recursion depth
       --maxsize <bytes>    Skip files larger than this
+      --dry-run            Map and validate plan but skip execution
       -h, --help           Show this help
+
+    Requires:
+      Brain folder set via SDMS_BRAIN_FOLDER env var, or auto-resolved
+      relative to the executable.
 
     Examples:
       scanner /home/user --depth 5 --hidden --output tree.json
@@ -437,47 +353,20 @@ static void PrintHelp() => Console.WriteLine("""
       scanner /srv/data  --maxsize 104857600   # skip files > 100 MB
     """);
 
-string FormatBytes(long bytes) => bytes switch
+static string FormatBytes(long bytes) => bytes switch
 {
-    < 1_024               => $"{bytes} B",
-    < 1_048_576           => $"{bytes / 1024.0:F1} KB",
-    < 1_073_741_824       => $"{bytes / 1_048_576.0:F1} MB",
-    _                     => $"{bytes / 1_073_741_824.0:F2} GB",
+    < 1_024         => $"{bytes} B",
+    < 1_048_576     => $"{bytes / 1024.0:F1} KB",
+    < 1_073_741_824 => $"{bytes / 1_048_576.0:F1} MB",
+    _               => $"{bytes / 1_073_741_824.0:F2} GB",
 };
-void Warn(string msg) => WriteColored("  [WARN] ", ConsoleColor.Yellow, msg);
-void WriteColored(string prefix, ConsoleColor color, string msg)
+
+static void Warn(string msg) => WriteColored("  [WARN] ", ConsoleColor.Yellow, msg);
+
+static void WriteColored(string prefix, ConsoleColor color, string msg)
 {
     Console.ForegroundColor = color;
     Console.Write(prefix);
     Console.ResetColor();
     Console.WriteLine(msg);
-}
-
-void PrintDistributions(AnalysisReport report)
-{
-    Console.WriteLine("\n==================================================");
-    Console.WriteLine($"{"EXTENSION",-15} | {"COUNT",-8} | {"TOTAL SIZE",-15}");
-    Console.WriteLine("--------------------------------------------------");
-
-    // Sort by count descending to see the most frequent types first
-    var sortedExts = report.FileTypeDistribution
-        .OrderByDescending(x => x.Value)
-        .ToList();
-
-    foreach (var entry in sortedExts)
-    {
-        string ext = string.IsNullOrEmpty(entry.Key) ? "(no ext)" : entry.Key;
-        int count = entry.Value;
-        long sizeInBytes = report.FileTypeSizeMap.GetValueOrDefault(entry.Key, 0L);
-            
-        // Format size for readability (e.g., 1.2 MB)
-        string readableSize = FormatBytes(sizeInBytes);
-
-        Console.WriteLine($"{ext,-15} | {count,-8} | {readableSize,-15}");
-    }
-
-    Console.WriteLine("==================================================");
-    Console.WriteLine($"Total Size: {FormatBytes(report.SourceTree.BasicInfo.TotalSizeBytes)}");
-    Console.WriteLine($"System Files Hidden: {report.SystemFiles.Count}");
-    Console.WriteLine($"Suggested Labels: {string.Join(", ", report.RequiredLabels)}");
 }
