@@ -2,15 +2,44 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SDMS", "SDMS\SDMS.csproj", "{0344A323-6935-4DD7-B882-9527D001FF88}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SDMS.Tests", "SDMS.Tests\SDMS.Tests.csproj", "{DBD4639D-80A4-4528-BAC5-CA54218A47DD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|x64.Build.0 = Debug|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Debug|x86.Build.0 = Debug|Any CPU
 		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|x64.ActiveCfg = Release|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|x64.Build.0 = Release|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|x86.ActiveCfg = Release|Any CPU
+		{0344A323-6935-4DD7-B882-9527D001FF88}.Release|x86.Build.0 = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|x64.Build.0 = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Debug|x86.Build.0 = Debug|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|x64.ActiveCfg = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|x64.Build.0 = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|x86.ActiveCfg = Release|Any CPU
+		{DBD4639D-80A4-4528-BAC5-CA54218A47DD}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
 	EndGlobalSection
 EndGlobal

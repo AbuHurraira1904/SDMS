@@ -6,6 +6,21 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <UseWPF>true</UseWPF>
+		<StartupObject>SDMS.App</StartupObject>
+		<UseWindowsForms>true</UseWindowsForms>
     </PropertyGroup>
+
+    <ItemGroup>
+      <Compile Include="UI\CLIProgram.cs" />
+      <Folder Include="Brain\" />
+	  <Compile Remove="UI\CliProgram.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="MessagePack" Version="3.1.4" />
+      <PackageReference Include="Microsoft.AspNetCore.App" Version="2.2.8" />
+      <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4015-prerelease" />
+      <PackageReference Include="System.Text.Json" Version="9.0.0" />
+    </ItemGroup>
 
 </Project>
