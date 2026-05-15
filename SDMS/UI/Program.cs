@@ -1,4 +1,4 @@
-using System.IO;
+/*using System.IO;
 using SDMS.Application;
 using SDMS.Domain.Analysis;
 using SDMS.Domain.Scanner;
@@ -369,4 +369,4 @@ static void WriteColored(string prefix, ConsoleColor color, string msg)
     Console.Write(prefix);
     Console.ResetColor();
     Console.WriteLine(msg);
-}
+}*/
