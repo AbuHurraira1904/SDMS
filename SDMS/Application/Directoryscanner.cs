@@ -57,7 +57,7 @@ public sealed class Directoryscanner : IDirectoryScanner
         // Delegate all traversal to the injected walker.
         var root = await _walker.WalkAsync(rootPath, options, progress, ct);
         
-        var metrics = (_walker as TreeWalker)?.Analysis ?? new FolderAnalysisMetrics();
+        var metrics = _walker.Analysis;
 
         return new FileTree
         {
