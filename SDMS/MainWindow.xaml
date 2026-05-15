@@ -1,12 +1,21 @@
-﻿<Window x:Class="SDMS.MainWindow"
+<Window x:Class="SDMS.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:SDMS"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="SDMS — Smart Directory Management System"
+        Height="900" Width="1440"
+        MinHeight="700" MinWidth="1100"
+        WindowStartupLocation="CenterScreen"
+        Background="#0f0f0f">
 
+    <!--
+        WebView2 fills the full window chrome-free.
+        CoreWebView2InitializationCompleted fires after the browser process
+        is ready; we navigate to the React app from code-behind at that point.
+    -->
+    <Grid>
+        <wv2:WebView2 x:Name="WebView"
+                      CoreWebView2InitializationCompleted="WebView_Initialized" />
     </Grid>
+
 </Window>

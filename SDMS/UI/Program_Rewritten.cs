@@ -1,3 +1,4 @@
+/*
 // ============================================================
 // Program.cs  →  SDMS.UI/  (rewritten)
 // CLI entry point after Application layer extraction.
@@ -283,3 +284,4 @@ static void PrintHelp() => Console.WriteLine("""
       sdms /home/user/docs --hidden --yes
       sdms D:\Projects --depth 4 --format msgpack
     """);
+    */

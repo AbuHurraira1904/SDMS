@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
@@ -6,6 +6,35 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <UseWPF>true</UseWPF>
+        <!-- Required so ASP.NET Core can run in-process inside a WPF app -->
+        <FrameworkReference>Microsoft.AspNetCore.App</FrameworkReference>
     </PropertyGroup>
+
+    <ItemGroup>
+        <None Remove="Brain\.env" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- WebView2 — embeds Chromium, hosts the React UI -->
+        <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+
+        <!-- ASP.NET Core minimal API + SignalR — local HTTP bridge -->
+        <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.1.0" />
+
+        <!-- JSON serialisation for API responses -->
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!--
+            Embed the built React app as content so it ships with the exe.
+            Run  pnpm run build  inside UI/Web first; this copies dist/ output.
+            The CopyToOutputDirectory ensures it lands next to SDMS.exe.
+        -->
+        <Content Include="UI\Web\dist\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </Content>
+    </ItemGroup>
 
 </Project>
